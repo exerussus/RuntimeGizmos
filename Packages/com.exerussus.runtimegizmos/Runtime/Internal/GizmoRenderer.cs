@@ -1,0 +1,931 @@
+using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using UnityEngine;
+using UnityEngine.Rendering;
+
+namespace RuntimeGizmos.Internal
+{
+    internal struct GizmoMeshCmd
+    {
+        public Mesh Mesh;
+        public int Submesh;
+        public Matrix4x4 Matrix;
+        public Color Color;
+        public int Z;
+        public float Expiry;
+    }
+
+    internal sealed class GizmoMeshCmdList
+    {
+        public GizmoMeshCmd[] Items = new GizmoMeshCmd[16];
+        public int Count;
+
+        public ref GizmoMeshCmd Add()
+        {
+            if (Count == Items.Length) Array.Resize(ref Items, Count << 1);
+            return ref Items[Count++];
+        }
+
+        public void Clear() => Count = 0;
+    }
+
+    internal sealed class GizmoTexturedBatch : IDisposable
+    {
+        public Texture Texture;
+        public readonly GizmoChannel<GizmoQuadVertex> Channel;
+        public readonly MaterialPropertyBlock Props = new MaterialPropertyBlock();
+
+        public GizmoTexturedBatch(Texture tex, string name)
+        {
+            Texture = tex;
+            Channel = new GizmoChannel<GizmoQuadVertex>(name, GizmoVertexLayouts.Quad,
+                MeshTopology.Triangles, 6, 64);
+            Props.SetTexture(GizmoRenderer.MainTexId, tex);
+        }
+
+        public void Dispose() => Channel.Dispose();
+    }
+
+    /// <summary>
+    /// Ядро. Хранит состояние отрисовки, каналы батчинга и материалы,
+    /// а также рассылает готовые меши по камерам через Graphics.RenderMesh.
+    /// </summary>
+    internal static unsafe class GizmoRenderer
+    {
+        // ------------------------------------------------------------------ состояние (горячий путь)
+        internal static bool Enabled = true;
+        internal static Color32 Color = new Color32(255, 255, 255, 255);
+        internal static float Width;      // <=1 → тонкая линия (MeshTopology.Lines)
+        internal static int Z;            // 0 = с тестом глубины, 1 = поверх всего
+        internal static float Duration;   // 0 = один кадр
+        internal static float Now;
+
+        internal static readonly int MainTexId = Shader.PropertyToID("_MainTex");
+        static readonly int ColorId = Shader.PropertyToID("_Color");
+        static readonly int ZTestId = Shader.PropertyToID("_ZTest");
+        static readonly int ZWriteId = Shader.PropertyToID("_ZWriteMode");
+        static readonly int BiasId = Shader.PropertyToID("_DepthBias");
+        static readonly int AlphaId = Shader.PropertyToID("_Alpha");
+
+        // ------------------------------------------------------------------ каналы
+        static GizmoChannel<GizmoVertex>[] _thin;
+        static GizmoChannel<GizmoWideVertex>[] _wide;
+        static GizmoChannel<GizmoVertex>[] _tri;
+
+        static Material[] _thinMat, _wideMat, _triMat, _meshMat, _iconMat, _screenMat;
+
+        static readonly Dictionary<int, GizmoTexturedBatch> _icons = new Dictionary<int, GizmoTexturedBatch>();
+        static readonly Dictionary<int, GizmoTexturedBatch> _screen = new Dictionary<int, GizmoTexturedBatch>();
+
+        static GizmoMeshCmdList _meshFront = new GizmoMeshCmdList();
+        static GizmoMeshCmdList _meshBack = new GizmoMeshCmdList();
+        static readonly GizmoMeshCmdList _meshRetained = new GizmoMeshCmdList();
+
+        // Пул property-блоков: по одному на команду отрисовки меша. Так мы не зависим
+        // от того, копирует ли RenderParams.matProps данные в момент сабмита.
+        static readonly List<MaterialPropertyBlock> _mpbPool = new List<MaterialPropertyBlock>();
+        static int _mpbCursor;
+        static bool _ready;
+        static float _meshLastData;
+        static bool _linearColor;
+
+        // ==================================================================== init / teardown
+
+        static bool _failed;
+
+        static GizmoChannel<GizmoTextVertex>[] _text;
+        static Material[] _textMat;
+
+        /// <summary>Поток, на котором система была установлена. Всё остальное — ошибка.</summary>
+        internal static int MainThreadId;
+
+        internal static void Ensure()
+        {
+            if (_ready || _failed) return;
+
+            _linearColor = QualitySettings.activeColorSpace == ColorSpace.Linear;
+            Now = Time.realtimeSinceStartup;
+            GizmoPrimitives.Ensure();
+
+            var unlit = LoadShader("GizmoUnlit");
+            var wide = LoadShader("GizmoWideLine");
+            var icon = LoadShader("GizmoBillboard");
+            var screen = LoadShader("GizmoScreen");
+            var text = LoadShader("GizmoText");
+
+            if (unlit == null || wide == null || icon == null || screen == null || text == null)
+            {
+                _failed = true;
+                Enabled = false;
+                return;
+            }
+
+            _ready = true;
+            Width = GizmoSettings.DefaultLineWidth;
+
+            _thinMat = new Material[2];
+            _wideMat = new Material[2];
+            _triMat = new Material[2];
+            _meshMat = new Material[2];
+            _iconMat = new Material[2];
+            _textMat = new Material[2];
+            _screenMat = new Material[1];
+
+            for (int z = 0; z < 2; z++)
+            {
+                bool depth = z == 0;
+                int zTest = depth ? (int)CompareFunction.LessEqual : (int)CompareFunction.Always;
+                int queue = (int)RenderQueue.Transparent + (depth ? 100 : 400);
+
+                float bias = depth ? GizmoSettings.DepthBias : 0f;
+
+                _thinMat[z] = MakeMat(unlit, "GizmoThin", zTest, 0, queue, bias);
+                _wideMat[z] = MakeMat(wide, "GizmoWide", zTest, 0, queue, bias);
+                // Сплошные фигуры с тестом глубины пишут в depth — так они корректно
+                // перекрывают друг друга. Режим "поверх всего" depth не пишет.
+                _triMat[z] = MakeMat(unlit, "GizmoSolid", zTest, depth ? 1 : 0, queue - 10, 0f);
+                _meshMat[z] = MakeMat(unlit, "GizmoMesh", zTest, depth ? 1 : 0, queue - 10, 0f);
+                _iconMat[z] = MakeMat(icon, "GizmoIcon", zTest, 0, queue + 10, bias);
+                _textMat[z] = MakeMat(text, "GizmoText", zTest, 0, queue + 20, bias);
+            }
+
+            _screenMat[0] = MakeMat(screen, "GizmoScreen", (int)CompareFunction.Always, 0,
+                (int)RenderQueue.Overlay, 0f);
+
+            _thin = new[]
+            {
+                new GizmoChannel<GizmoVertex>("thin0", GizmoVertexLayouts.Thin, MeshTopology.Lines, 2, 2048),
+                new GizmoChannel<GizmoVertex>("thin1", GizmoVertexLayouts.Thin, MeshTopology.Lines, 2, 512),
+            };
+            _wide = new[]
+            {
+                new GizmoChannel<GizmoWideVertex>("wide0", GizmoVertexLayouts.Wide, MeshTopology.Triangles, 6, 512, 0.25f),
+                new GizmoChannel<GizmoWideVertex>("wide1", GizmoVertexLayouts.Wide, MeshTopology.Triangles, 6, 256, 0.25f),
+            };
+            _tri = new[]
+            {
+                new GizmoChannel<GizmoVertex>("tri0", GizmoVertexLayouts.Thin, MeshTopology.Triangles, 3, 1024),
+                new GizmoChannel<GizmoVertex>("tri1", GizmoVertexLayouts.Thin, MeshTopology.Triangles, 3, 256),
+            };
+            _text = new[]
+            {
+                new GizmoChannel<GizmoTextVertex>("text0", GizmoVertexLayouts.Text, MeshTopology.Triangles, 6, 512, 0.25f),
+                new GizmoChannel<GizmoTextVertex>("text1", GizmoVertexLayouts.Text, MeshTopology.Triangles, 6, 256, 0.25f),
+            };
+        }
+
+        static Shader LoadShader(string name)
+        {
+            var s = Resources.Load<Shader>("RuntimeGizmos/" + name);
+            if (s == null) s = Shader.Find("Hidden/RuntimeGizmos/" + name.Replace("Gizmo", ""));
+            if (s == null)
+                Debug.LogError($"[RuntimeGizmos] Не найден шейдер RuntimeGizmos/{name}. " +
+                               "Папка Resources/RuntimeGizmos должна лежать в проекте.");
+            else if (!s.isSupported)
+            {
+                Debug.LogError($"[RuntimeGizmos] Шейдер {s.name} не скомпилировался на этой платформе. " +
+                               "Шейдеры пакета рассчитаны на URP; убедитесь, что пакет " +
+                               "com.unity.render-pipelines.universal установлен.");
+                return null;
+            }
+            return s;
+        }
+
+        static Material MakeMat(Shader sh, string name, int zTest, int zWrite, int queue, float depthBias)
+        {
+            var m = new Material(sh) { name = name, hideFlags = HideFlags.HideAndDontSave };
+            m.SetFloat(ZTestId, zTest);
+            m.SetFloat(ZWriteId, zWrite);
+            m.SetFloat(BiasId, depthBias);
+            m.SetFloat(AlphaId, 1f);
+            m.renderQueue = queue;
+            return m;
+        }
+
+        internal static void Dispose()
+        {
+            _failed = false;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _threadReported = false;
+#endif
+            if (!_ready) return;
+            _ready = false;
+
+            DisposeChannels(_thin); DisposeChannels(_wide); DisposeChannels(_tri);
+            DisposeChannels(_text);
+            foreach (var b in _icons.Values) b.Dispose();
+            foreach (var b in _screen.Values) b.Dispose();
+            _icons.Clear();
+            _screen.Clear();
+
+            DestroyMats(_thinMat); DestroyMats(_wideMat); DestroyMats(_triMat);
+            DestroyMats(_meshMat); DestroyMats(_iconMat); DestroyMats(_screenMat);
+            DestroyMats(_textMat);
+
+            GizmoIndexPool.Dispose();
+            GizmoPrimitives.Dispose();
+            GizmoFont.Dispose();
+            GizmoWireMeshCache.Dispose();
+        }
+
+        static void DisposeChannels<T>(GizmoChannel<T>[] arr) where T : unmanaged
+        {
+            if (arr == null) return;
+            for (int i = 0; i < arr.Length; i++) arr[i]?.Dispose();
+        }
+
+        static void DestroyMats(Material[] arr)
+        {
+            if (arr == null) return;
+            for (int i = 0; i < arr.Length; i++)
+            {
+                if (arr[i] == null) continue;
+                if (Application.isPlaying) UnityEngine.Object.Destroy(arr[i]);
+                else UnityEngine.Object.DestroyImmediate(arr[i]);
+                arr[i] = null;
+            }
+        }
+
+        internal static void ClearAll()
+        {
+            if (!_ready) return;
+            for (int i = 0; i < 2; i++) { _thin[i].Clear(); _wide[i].Clear(); _tri[i].Clear(); _text[i].Clear(); }
+            foreach (var b in _icons.Values) b.Channel.Clear();
+            foreach (var b in _screen.Values) b.Channel.Clear();
+            _meshFront.Clear(); _meshBack.Clear(); _meshRetained.Clear();
+        }
+
+        // ==================================================================== кадр
+
+        internal static bool HasProducedData;
+
+        internal static void BeginFrame(bool strict)
+        {
+            if (!_ready) return;
+
+            // Истечение считаем по ТОМУ ЖЕ времени, которым штамповались команды этого кадра.
+            //
+            // Draw* идёт из Update/LateUpdate, то есть до BeginFrame, и берёт Now, выставленный
+            // на прошлой границе кадра. Если бы мы сначала обновили Now, а потом проверяли
+            // Expiry > Now, то любая длительность короче кадра истекала бы мгновенно: duration = 0
+            // жил бы кадр, а duration = 0.001 — ноль кадров. Теперь геометрия с duration > 0
+            // гарантированно переживает кадр, в котором была нарисована.
+            float t = Now;
+            float stale = GizmoSettings.EditorStaleTimeout;
+
+            for (int i = 0; i < 2; i++)
+            {
+                _thin[i].BeginFrame(strict, t, stale);
+                _wide[i].BeginFrame(strict, t, stale);
+                _tri[i].BeginFrame(strict, t, stale);
+                _text[i].BeginFrame(strict, t, stale);
+            }
+
+            foreach (var b in _icons.Values) b.Channel.BeginFrame(strict, t, stale);
+            foreach (var b in _screen.Values) b.Channel.BeginFrame(strict, t, stale);
+
+            // Текстуру могли уничтожить — батч с ней уже ничего не нарисует, а нативные
+            // буферы и меши держит. Словари крошечные, обход раз в кадр бесплатный.
+            PruneDeadBatches(_icons);
+            PruneDeadBatches(_screen);
+
+            // отложенные меши
+            int w = 0;
+            for (int i = 0; i < _meshRetained.Count; i++)
+                if (_meshRetained.Items[i].Expiry > t)
+                    _meshRetained.Items[w++] = _meshRetained.Items[i];
+            _meshRetained.Count = w;
+
+            if (_meshBack.Count > 0)
+            {
+                var tmp = _meshFront; _meshFront = _meshBack; _meshBack = tmp;
+                _meshBack.Clear();
+                _meshLastData = t;
+            }
+            else if (strict || t - _meshLastData > stale)
+            {
+                _meshFront.Clear();
+            }
+
+            HasProducedData = false;
+
+            // Штамп для команд следующего кадра.
+            Now = Time.realtimeSinceStartup;
+        }
+
+        static readonly List<int> _deadBatches = new List<int>();
+
+        static void PruneDeadBatches(Dictionary<int, GizmoTexturedBatch> batches)
+        {
+            if (batches.Count == 0) return;
+
+            _deadBatches.Clear();
+            foreach (var kv in batches)
+                if (kv.Value.Texture == null) _deadBatches.Add(kv.Key);
+
+            for (int i = 0; i < _deadBatches.Count; i++)
+            {
+                batches[_deadBatches[i]].Dispose();
+                batches.Remove(_deadBatches[i]);
+            }
+        }
+
+        // ==================================================================== отправка на камеру
+
+        internal static void Submit(Camera cam)
+        {
+            if (!_ready || cam == null) return;
+
+            switch (cam.cameraType)
+            {
+                case CameraType.Game: if (!GizmoSettings.DrawInGameView) return; break;
+                case CameraType.SceneView: if (!GizmoSettings.DrawInSceneView) return; break;
+                case CameraType.Preview:
+                case CameraType.Reflection:
+                case CameraType.VR:
+                default: if (!GizmoSettings.DrawInOtherCameras) return; break;
+            }
+
+            var rp = new RenderParams
+            {
+                layer = GizmoSettings.Layer,
+                renderingLayerMask = GizmoSettings.RenderingLayerMask,
+                camera = cam,
+                shadowCastingMode = ShadowCastingMode.Off,
+                receiveShadows = false,
+                lightProbeUsage = LightProbeUsage.Off,
+                reflectionProbeUsage = ReflectionProbeUsage.Off,
+                motionVectorMode = MotionVectorGenerationMode.ForceNoMotion,
+                rendererPriority = 0,
+                matProps = null,
+            };
+
+            float alpha = GizmoSettings.GlobalAlpha;
+
+            for (int z = 0; z < 2; z++)
+            {
+                if (_tri[z].Prepare(out var m, out var b)) Emit(ref rp, _triMat[z], m, b, alpha);
+                if (_thin[z].Prepare(out m, out b)) Emit(ref rp, _thinMat[z], m, b, alpha);
+                if (_wide[z].Prepare(out m, out b)) Emit(ref rp, _wideMat[z], m, b, alpha);
+            }
+
+            var textBounds = new Bounds(cam.transform.position, new Vector3(1e5f, 1e5f, 1e5f));
+            for (int z = 0; z < 2; z++)
+                if (_text[z].Prepare(out var tm, out _))
+                    Emit(ref rp, _textMat[z], tm, textBounds, alpha);
+
+            foreach (var kv in _icons)
+                if (kv.Value.Channel.Prepare(out var m, out var b))
+                {
+                    if (kv.Value.Texture == null) continue;
+                    rp.material = _iconMat[0];
+                    rp.matProps = kv.Value.Props;
+                    rp.worldBounds = b;
+                    Graphics.RenderMesh(rp, m, 0, Matrix4x4.identity);
+                    rp.matProps = null;
+                }
+
+            if (_screen.Count > 0)
+            {
+                // Экранная геометрия задаётся прямо в клип-пространстве, поэтому
+                // ограничивающий бокс привязываем к камере, иначе её отсечёт куллинг.
+                var camBounds = new Bounds(cam.transform.position, new Vector3(1e4f, 1e4f, 1e4f));
+                foreach (var kv in _screen)
+                    if (kv.Value.Channel.Prepare(out var m, out _))
+                    {
+                        if (kv.Value.Texture == null) continue;
+                        rp.material = _screenMat[0];
+                        rp.matProps = kv.Value.Props;
+                        rp.worldBounds = camBounds;
+                        Graphics.RenderMesh(rp, m, 0, Matrix4x4.identity);
+                        rp.matProps = null;
+                    }
+            }
+
+            _mpbCursor = 0;
+            SubmitMeshList(ref rp, _meshRetained, alpha);
+            SubmitMeshList(ref rp, _meshFront, alpha);
+        }
+
+        static void Emit(ref RenderParams rp, Material mat, Mesh mesh, Bounds b, float alpha)
+        {
+            mat.SetFloat(AlphaId, alpha);
+            rp.material = mat;
+            rp.worldBounds = b;
+            Graphics.RenderMesh(rp, mesh, 0, Matrix4x4.identity);
+        }
+
+        static void SubmitMeshList(ref RenderParams rp, GizmoMeshCmdList list, float alpha)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                ref var c = ref list.Items[i];
+                if (c.Mesh == null) continue;
+
+                var mat = _meshMat[c.Z];
+                mat.SetFloat(AlphaId, alpha);
+
+                while (_mpbPool.Count <= _mpbCursor) _mpbPool.Add(new MaterialPropertyBlock());
+                var mpb = _mpbPool[_mpbCursor++];
+
+                var col = c.Color;
+                mpb.SetColor(ColorId, _linearColor ? col.linear : col);
+                rp.material = mat;
+                rp.matProps = mpb;
+
+                var b = c.Mesh.bounds;
+                var center = c.Matrix.MultiplyPoint3x4(b.center);
+                var ext = b.extents;
+                var m = c.Matrix;
+                var wext = new Vector3(
+                    Mathf.Abs(m.m00) * ext.x + Mathf.Abs(m.m01) * ext.y + Mathf.Abs(m.m02) * ext.z,
+                    Mathf.Abs(m.m10) * ext.x + Mathf.Abs(m.m11) * ext.y + Mathf.Abs(m.m12) * ext.z,
+                    Mathf.Abs(m.m20) * ext.x + Mathf.Abs(m.m21) * ext.y + Mathf.Abs(m.m22) * ext.z);
+                rp.worldBounds = new Bounds(center, wext * 2f);
+
+                Graphics.RenderMesh(rp, c.Mesh, c.Submesh, c.Matrix);
+                rp.matProps = null;
+            }
+        }
+
+        // ==================================================================== запись примитивов
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static bool Begin()
+        {
+            if (!Enabled) return false;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // Запись идёт сырыми указателями в нативные буферы без всякой синхронизации,
+            // поэтому вызов из джоба или потока — это тихая порча кучи, которая всплывёт
+            // через несколько кадров в совершенно другом месте. Ловим сразу.
+            if (System.Threading.Thread.CurrentThread.ManagedThreadId != MainThreadId && !ReportThread())
+                return false;
+#endif
+
+            // Ensure может не подняться (нет шейдеров, не тот конвейер). Раньше здесь
+            // возвращался true, и вызывающий шёл в ещё не созданные каналы — NRE на
+            // первом же Draw*. Теперь такой кадр просто молча пропускается.
+            if (!_ready)
+            {
+                Ensure();
+                if (!_ready) return false;
+            }
+
+            HasProducedData = true;
+            return true;
+        }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        static bool _threadReported;
+
+        static bool ReportThread()
+        {
+            if (_threadReported) return false;
+            _threadReported = true;
+            Debug.LogError("[RuntimeGizmos] Draw* вызван не из главного потока. " +
+                           "Буферы не потокобезопасны, вызовы из джобов и потоков игнорируются. " +
+                           "Соберите данные в джобе и рисуйте после Complete().");
+            return false;
+        }
+#endif
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void Line(Vector3 a, Vector3 b)
+        {
+            if (!Begin()) return;
+            if (Width > 1f) WideLine(a, b);
+            else ThinLine(a, b);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        /// <param name="worldSpace">
+        /// false — размер в пикселях, метка одинакова на любом расстоянии.
+        /// true — размер в мировых единицах, метка уменьшается с расстоянием.
+        /// </param>
+        internal static unsafe void Text(string text, Vector3 anchor, float sizePx, Vector2 pixelOffset,
+                                         float align, bool worldSpace = false)
+        {
+            if (string.IsNullOrEmpty(text) || sizePx <= 0f) return;
+            if (!Begin()) return;
+
+            GizmoFont.Ensure();
+
+            var ch = _text[Z];
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            var col = Color;
+
+            // В пиксельном режиме lineWidth — это пиксели. В мировом привязываем толщину
+            // к высоте буквы, иначе на расстоянии текст схлопнется в кляксу: lineWidth = 1
+            // даёт штрих в 1/12 высоты прописной, 2 — вдвое жирнее.
+            // Знак несёт режим: шейдер читает минус как «мировые единицы».
+            float strokeW = worldSpace
+                ? -(sizePx * Mathf.Max(0.25f, Width) / 12f)
+                : Mathf.Max(1f, Width);
+
+            float scale = sizePx / GizmoFont.CapHeight;
+
+            // align: 0 — влево от якоря, 0.5 — по центру, 1 — вправо.
+            float penX = pixelOffset.x - GizmoFont.Width(text) * scale * align;
+            float baseY = pixelOffset.y - GizmoFont.Baseline * scale;
+
+            var segs = GizmoFont.Segments;
+            float expiry = Now + Duration;
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (GizmoFont.Glyph(text[i], out int s0, out int n))
+                {
+                    for (int k = 0; k < n; k++)
+                    {
+                        Vector4 g = segs[s0 + k];
+                        var p0 = new Vector2(penX + g.x * scale, baseY + g.y * scale);
+                        var p1 = new Vector2(penX + g.z * scale, baseY + g.w * scale);
+
+                        var v = buf.Reserve(6);
+
+                        // Концы отрезка НЕ переставляем местами: обе вершины должны
+                        // считать одну и ту же локальную систему, иначе интерполировать
+                        // по кваду нечего и сглаживание в шейдере поедет. Признак конца
+                        // едет в модуле поля стороны: 1 — начало, 2 — конец.
+                        SetText(v + 0, anchor, col, p0, p1, -1f, strokeW);
+                        SetText(v + 1, anchor, col, p0, p1, +1f, strokeW);
+                        SetText(v + 2, anchor, col, p0, p1, +2f, strokeW);
+                        SetText(v + 3, anchor, col, p0, p1, -1f, strokeW);
+                        SetText(v + 4, anchor, col, p0, p1, +2f, strokeW);
+                        SetText(v + 5, anchor, col, p0, p1, -2f, strokeW);
+
+                        if (ret)
+                        {
+                            var e = ch.RetainedExpiry.Reserve(6);
+                            for (int q = 0; q < 6; q++) e[q] = expiry;
+                        }
+                    }
+                }
+
+                penX += GizmoFont.Advance * scale;
+            }
+
+            buf.Encapsulate(anchor);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static unsafe void SetText(GizmoTextVertex* v, in Vector3 anchor, in Color32 c,
+                                   in Vector2 offset, in Vector2 other, float side, float width)
+        {
+            v->Position = anchor;
+            v->Color = c;
+            v->Offset = offset;
+            v->Other = other;
+            v->SideWidth = new Vector2(side, width);
+        }
+
+        static void ThinLine(in Vector3 a, in Vector3 b)
+        {
+            var ch = _thin[Z];
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            var p = buf.Reserve(2);
+            var c = Color;
+            p[0].Position = a; p[0].Color = c;
+            p[1].Position = b; p[1].Color = c;
+            buf.Encapsulate(a); buf.Encapsulate(b);
+            if (ret)
+            {
+                var e = ch.RetainedExpiry.Reserve(2);
+                float t = Now + Duration;
+                e[0] = t; e[1] = t;
+            }
+        }
+
+        static void WideLine(in Vector3 a, in Vector3 b)
+        {
+            var ch = _wide[Z];
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            var p = buf.Reserve(6);
+            var c = Color;
+            float w = Width;
+
+            // Два треугольника. Сторона у конца B инвертируется, потому что направление
+            // отрезка в шейдере считается как normalize(Other - Position).
+            p[0].Position = a; p[0].Other = b; p[0].Color = c; p[0].Params = new Vector2(-1f, w);
+            p[1].Position = a; p[1].Other = b; p[1].Color = c; p[1].Params = new Vector2(+1f, w);
+            p[2].Position = b; p[2].Other = a; p[2].Color = c; p[2].Params = new Vector2(+1f, w);
+            p[3].Position = b; p[3].Other = a; p[3].Color = c; p[3].Params = new Vector2(+1f, w);
+            p[4].Position = a; p[4].Other = b; p[4].Color = c; p[4].Params = new Vector2(+1f, w);
+            p[5].Position = b; p[5].Other = a; p[5].Color = c; p[5].Params = new Vector2(-1f, w);
+
+            buf.Encapsulate(a); buf.Encapsulate(b);
+            if (ret)
+            {
+                var e = ch.RetainedExpiry.Reserve(6);
+                float t = Now + Duration;
+                for (int i = 0; i < 6; i++) e[i] = t;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void Triangle(Vector3 a, Vector3 b, Vector3 c)
+        {
+            if (!Begin()) return;
+            var ch = _tri[Z];
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            var p = buf.Reserve(3);
+            var col = Color;
+            p[0].Position = a; p[0].Color = col;
+            p[1].Position = b; p[1].Color = col;
+            p[2].Position = c; p[2].Color = col;
+            buf.Encapsulate(a); buf.Encapsulate(b); buf.Encapsulate(c);
+            if (ret)
+            {
+                var e = ch.RetainedExpiry.Reserve(3);
+                float t = Now + Duration;
+                e[0] = t; e[1] = t; e[2] = t;
+            }
+        }
+
+        /// <summary>Пакетная заливка списка отрезков (пары точек) из кэшированного примитива.</summary>
+        internal static void LineArray(Vector3* src, int n, Matrix4x4 m)
+        {
+            if (!Begin() || n <= 0) return;
+
+            if (Width > 1f)
+            {
+                for (int i = 0; i < n; i += 2)
+                    WideLine(m.MultiplyPoint3x4(src[i]), m.MultiplyPoint3x4(src[i + 1]));
+                return;
+            }
+
+            var ch = _thin[Z];
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            var p = buf.Reserve(n);
+            var c = Color;
+            for (int i = 0; i < n; i++)
+            {
+                var w = m.MultiplyPoint3x4(src[i]);
+                p[i].Position = w;
+                p[i].Color = c;
+                buf.Encapsulate(w);
+            }
+            if (ret)
+            {
+                var e = ch.RetainedExpiry.Reserve(n);
+                float t = Now + Duration;
+                for (int i = 0; i < n; i++) e[i] = t;
+            }
+        }
+
+        /// <summary>Пакетная заливка супа треугольников из кэшированного примитива.</summary>
+        internal static void TriangleArray(Vector3* src, int n, Matrix4x4 m)
+        {
+            if (!Begin() || n <= 0) return;
+
+            var ch = _tri[Z];
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            var p = buf.Reserve(n);
+            var c = Color;
+            for (int i = 0; i < n; i++)
+            {
+                var w = m.MultiplyPoint3x4(src[i]);
+                p[i].Position = w;
+                p[i].Color = c;
+                buf.Encapsulate(w);
+            }
+            if (ret)
+            {
+                var e = ch.RetainedExpiry.Reserve(n);
+                float t = Now + Duration;
+                for (int i = 0; i < n; i++) e[i] = t;
+            }
+        }
+
+        internal static void MeshCmd(Mesh mesh, int submesh, Matrix4x4 m, Color color)
+        {
+            if (!Begin() || mesh == null) return;
+
+            // Graphics.RenderMesh бросает на индексе вне диапазона, а пустой меш
+            // (subMeshCount == 0) не нарисовать вообще ничем.
+            int count = mesh.subMeshCount;
+            if (count <= 0) return;
+            if ((uint)submesh >= (uint)count) submesh = Mathf.Clamp(submesh, 0, count - 1);
+
+            bool ret = Duration > 0f;
+            var list = ret ? _meshRetained : _meshBack;
+            ref var c = ref list.Add();
+            c.Mesh = mesh;
+            c.Submesh = submesh;
+            c.Matrix = m;
+            c.Color = color;
+            c.Z = Z;
+            c.Expiry = ret ? Now + Duration : 0f;
+        }
+
+        // ==================================================================== текстурные батчи
+
+        internal static void Quad(Texture tex, Vector3 center, Vector2 size, bool worldSize, Color color)
+        {
+            if (!Begin() || tex == null) return;
+
+            int id = tex.GetInstanceID();
+            if (!_icons.TryGetValue(id, out var batch))
+            {
+                batch = new GizmoTexturedBatch(tex, "icon" + id);
+                _icons[id] = batch;
+            }
+            batch.Texture = tex;
+
+            var sz = worldSize ? new Vector2(-Mathf.Abs(size.x), -Mathf.Abs(size.y)) : size;
+            WriteQuad(batch, center, sz, color);
+        }
+
+        internal static void ScreenQuad(Texture tex, Rect rect, Color color)
+        {
+            if (!Begin() || tex == null) return;
+
+            int id = tex.GetInstanceID();
+            if (!_screen.TryGetValue(id, out var batch))
+            {
+                batch = new GizmoTexturedBatch(tex, "screen" + id);
+                _screen[id] = batch;
+            }
+            batch.Texture = tex;
+
+            var ch = batch.Channel;
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            var p = buf.Reserve(6);
+            Color32 c = color;
+
+            // позиции сразу в пикселях экрана, шейдер переведёт их в клип-пространство
+            Vector3 p00 = new Vector3(rect.xMin, rect.yMin, 0);
+            Vector3 p10 = new Vector3(rect.xMax, rect.yMin, 0);
+            Vector3 p11 = new Vector3(rect.xMax, rect.yMax, 0);
+            Vector3 p01 = new Vector3(rect.xMin, rect.yMax, 0);
+
+            SetScreenVert(p + 0, p00, c, 0, 1);
+            SetScreenVert(p + 1, p10, c, 1, 1);
+            SetScreenVert(p + 2, p11, c, 1, 0);
+            SetScreenVert(p + 3, p00, c, 0, 1);
+            SetScreenVert(p + 4, p11, c, 1, 0);
+            SetScreenVert(p + 5, p01, c, 0, 0);
+
+            if (ret)
+            {
+                var e = ch.RetainedExpiry.Reserve(6);
+                float t = Now + Duration;
+                for (int i = 0; i < 6; i++) e[i] = t;
+            }
+        }
+
+        static void SetScreenVert(GizmoQuadVertex* v, Vector3 pos, Color32 c, float u, float vv)
+        {
+            v->Position = pos;
+            v->Color = c;
+            v->Corner = new Vector4(0, 0, u, vv);
+            v->Size = Vector2.zero;
+        }
+
+        static void WriteQuad(GizmoTexturedBatch batch, Vector3 center, Vector2 size, Color color)
+        {
+            var ch = batch.Channel;
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            var p = buf.Reserve(6);
+            Color32 c = color;
+
+            WriteCorner(p + 0, center, size, c, -1, -1, 0, 0);
+            WriteCorner(p + 1, center, size, c, +1, -1, 1, 0);
+            WriteCorner(p + 2, center, size, c, +1, +1, 1, 1);
+            WriteCorner(p + 3, center, size, c, -1, -1, 0, 0);
+            WriteCorner(p + 4, center, size, c, +1, +1, 1, 1);
+            WriteCorner(p + 5, center, size, c, -1, +1, 0, 1);
+
+            buf.Encapsulate(center);
+            if (ret)
+            {
+                var e = ch.RetainedExpiry.Reserve(6);
+                float t = Now + Duration;
+                for (int i = 0; i < 6; i++) e[i] = t;
+            }
+        }
+
+        static void WriteCorner(GizmoQuadVertex* v, Vector3 center, Vector2 size, Color32 c,
+            float cx, float cy, float u, float vv)
+        {
+            v->Position = center;
+            v->Color = c;
+            v->Corner = new Vector4(cx, cy, u, vv);
+            v->Size = size;
+        }
+    }
+
+    /// <summary>Кэш каркасных (line-topology) версий произвольных мешей для DrawWireMesh.</summary>
+    internal static class GizmoWireMeshCache
+    {
+        struct Entry { public Mesh Source; public Mesh Wire; }
+
+        static readonly Dictionary<int, Entry> _cache = new Dictionary<int, Entry>();
+        static readonly List<Vector3> _verts = new List<Vector3>();
+        static readonly List<int> _tris = new List<int>();
+        static readonly List<int> _lines = new List<int>();
+
+        public static Mesh Get(Mesh src, int submesh)
+        {
+            if (src == null) return null;
+
+            // На пустом меше Mathf.Clamp(submesh, 0, -1) вернул бы -1, и следующий же
+            // GetTopology(-1) бросил бы исключение.
+            int subCount = src.subMeshCount;
+            if (subCount <= 0) return null;
+
+            // Кламп ДО вычисления ключа: иначе submesh 5 и 99 на односабмешевом меше
+            // дали бы два разных ключа и две одинаковые копии каркаса.
+            submesh = Mathf.Clamp(submesh, 0, subCount - 1);
+
+            int key = src.GetInstanceID() * 397 ^ submesh;
+            if (_cache.TryGetValue(key, out var e))
+            {
+                // Instance ID может быть переиспользован после выгрузки ассета — сверяем источник,
+                // иначе однажды нарисовали бы каркас совсем другого меша.
+                if (e.Source == src) return e.Wire;
+                Destroy(e.Wire);
+                _cache.Remove(key);
+            }
+
+            if (!src.isReadable)
+            {
+                Debug.LogWarning($"[RuntimeGizmos] Меш '{src.name}' не Read/Write Enabled — " +
+                                 "каркас построить нельзя, рисую заливкой.");
+                _cache[key] = new Entry { Source = src, Wire = null };
+                return null;
+            }
+
+            src.GetVertices(_verts);
+            if (src.GetTopology(submesh) != MeshTopology.Triangles)
+            {
+                _cache[key] = new Entry { Source = src, Wire = null };
+                return null;
+            }
+
+            src.GetTriangles(_tris, submesh);
+            _lines.Clear();
+            for (int i = 0; i < _tris.Count; i += 3)
+            {
+                int a = _tris[i], b = _tris[i + 1], c = _tris[i + 2];
+                _lines.Add(a); _lines.Add(b);
+                _lines.Add(b); _lines.Add(c);
+                _lines.Add(c); _lines.Add(a);
+            }
+
+            var m = new Mesh
+            {
+                name = "~GizmoWire_" + src.name,
+                hideFlags = HideFlags.HideAndDontSave,
+                indexFormat = _verts.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16
+            };
+            m.SetVertices(_verts);
+            m.SetIndices(_lines, MeshTopology.Lines, 0, true);
+            _cache[key] = new Entry { Source = src, Wire = m };
+            if (_cache.Count > PurgeAt) Purge();
+            return m;
+        }
+
+        // Источник могли выгрузить — тогда каркас держать незачем. Чистим редко и только
+        // по достижении порога, чтобы не платить за обход каждый кадр.
+        const int PurgeAt = 64;
+        static readonly List<int> _dead = new List<int>();
+
+        static void Purge()
+        {
+            _dead.Clear();
+            foreach (var kv in _cache)
+                if (kv.Value.Source == null) _dead.Add(kv.Key);
+
+            for (int i = 0; i < _dead.Count; i++)
+            {
+                Destroy(_cache[_dead[i]].Wire);
+                _cache.Remove(_dead[i]);
+            }
+        }
+
+        static void Destroy(Mesh m)
+        {
+            if (m == null) return;
+            if (Application.isPlaying) UnityEngine.Object.Destroy(m);
+            else UnityEngine.Object.DestroyImmediate(m);
+        }
+
+        public static void Dispose()
+        {
+            foreach (var e in _cache.Values) Destroy(e.Wire);
+            _cache.Clear();
+            _dead.Clear();
+        }
+    }
+}

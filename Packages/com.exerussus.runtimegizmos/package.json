@@ -1,0 +1,12 @@
+{
+  "name": "com.exerussus.runtimegizmos",
+  "version": "1.0.0",
+  "displayName": "Runtime Gizmos",
+  "description": "Замена UnityEngine.Gizmos, которая рисует и в билде, и в редакторе, и видна через игровую камеру. URP, минимум аллокаций, текстовые метки, паттерны отладочной отрисовки и расширения для компонентов Unity.",
+  "unity": "6000.0",
+  "keywords": ["gizmos", "debug", "urp", "runtime", "visualization"],
+  "author": { "name": "exerussus", "url": "https://github.com/exerussus" },
+  "documentationUrl": "https://github.com/exerussus/RuntimeGizmos/blob/main/Packages/com.exerussus.runtimegizmos/README.md",
+  "changelogUrl": "https://github.com/exerussus/RuntimeGizmos/blob/main/Packages/com.exerussus.runtimegizmos/CHANGELOG.md",
+  "dependencies": {}
+}

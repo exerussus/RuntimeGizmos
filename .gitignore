@@ -1,0 +1,15 @@
+# Unity
+*.csproj
+*.sln
+*.user
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+
+# ОС и редакторы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

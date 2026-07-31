@@ -1,0 +1,12 @@
+{
+  "name": "com.exerussus.runtimegizmos.demo",
+  "version": "1.0.0",
+  "displayName": "Runtime Gizmos — демо",
+  "description": "Демо-сцена и чеклист ручной проверки для Runtime Gizmos. Прогоняет все возможности пакета в одном компоненте. Требует установленного com.exerussus.runtimegizmos — поставьте его первым.",
+  "unity": "6000.0",
+  "keywords": ["gizmos", "debug", "sample", "demo"],
+  "author": { "name": "exerussus", "url": "https://github.com/exerussus" },
+  "documentationUrl": "https://github.com/exerussus/RuntimeGizmos/blob/main/Packages/com.exerussus.runtimegizmos.demo/README.md",
+  "changelogUrl": "https://github.com/exerussus/RuntimeGizmos/blob/main/Packages/com.exerussus.runtimegizmos.demo/CHANGELOG.md",
+  "dependencies": {}
+}
