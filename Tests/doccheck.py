@@ -17,7 +17,7 @@ md = open(os.path.join(PACKAGE, 'README.md'), encoding='utf-8').read()
 blocks = re.findall(r'```csharp\n(.*?)```', md, re.S)
 skip = ('using Gizmos =', 'void Update()', 'using RuntimeGizmos.Extensions;')   # файловый алиас и фрагмент MonoBehaviour
 
-DECLS = '''        Transform transform = null, head = null, player = null, eyes = null;
+DECLS = '''        Transform transform = null, head = null, player = null, eyes = null, muzzle = null;
         GameObject agent = null, target = null;
         Vector3 from = default, to = default, direction = default, position = default,
                 center = default, a = default, b = default, c = default, d = default,
@@ -30,14 +30,14 @@ DECLS = '''        Transform transform = null, head = null, player = null, eyes 
         Color tint = default; Rect rect = default; string name = null;
         float distance = 0, radius = 0, fov = 0, maxRange = 0, minRange = 0, aspect = 0,
               angleDeg = 0, length = 0, height = 0, width = 0, aggroRadius = 0,
-              viewDistance = 0, cornerFraction = 0, faint = 0;
+              viewDistance = 0, cornerFraction = 0, faint = 0, hp = 0, maxHp = 1, t = 0;
         int submeshIndex = 0, left = 0, right = 0, top = 0, bottom = 0;
         Vector3[] points = null, waypoints = null;
         Rigidbody rb = null, rigidbody = null; RaycastHit hit = default;
         Collider collider = null; Collider2D collider2D = null; Rigidbody2D rigidbody2D = null;
         RaycastHit2D hit2D = default; Joint joint = null; AudioSource audioSource = null;
         Light light = null; RectTransform rectTransform = null; Renderer renderer = null;
-        Transform[] enemies = null;
+        Transform[] enemies = null; Transform enemy = null;
 '''
 
 methods, kept = [], 0

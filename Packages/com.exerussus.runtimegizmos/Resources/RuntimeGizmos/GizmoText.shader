@@ -58,12 +58,12 @@ Shader "Hidden/RuntimeGizmos/Text"
                 half4  color      : COLOR;
                 float2 offset     : TEXCOORD0;  // смещение этого конца, пиксели
                 float2 other      : TEXCOORD1;  // смещение другого конца, пиксели
-                // x: знак = сторона квада, модуль = конец отрезка (1 — начало, 2 — конец).
-                //    Оба конца обязаны считать ОДНУ И ТУ ЖЕ локальную систему, иначе
-                //    интерполировать по кваду нечего — отсюда явный признак конца
-                //    вместо перестановки offset/other местами.
-                // y: толщина штриха; минус означает мировой режим.
-                float2 sideWidth  : TEXCOORD2;
+                // x: знак = сторона квада, модуль = конец отрезка (1 начало, 2 конец).
+                //    Оба конца обязаны считать одну локальную систему, иначе
+                //    интерполировать по кваду нечего.
+                // y: толщина штриха.
+                // z: режим — 0 пиксели от мирового якоря, 1 мировые единицы, 2 экран.
+                float3 sideWidth  : TEXCOORD2;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -85,8 +85,8 @@ Shader "Hidden/RuntimeGizmos/Text"
                 // Знак толщины несёт режим: минус — размер задан в мировых единицах.
                 // Отдельный атрибут ради одного бита заводить незачем, толщина всегда
                 // положительна. Тот же приём, что у билборда иконок.
-                float halfW = 0.5 * abs(IN.sideWidth.y);
-                bool worldMode = IN.sideWidth.y < 0.0;
+                float halfW = 0.5 * IN.sideWidth.y;
+                float mode = IN.sideWidth.z;
 
                 float sideSign = IN.sideWidth.x < 0.0 ? -1.0 : 1.0;
                 bool atEnd = abs(IN.sideWidth.x) > 1.5;
@@ -107,7 +107,17 @@ Shader "Hidden/RuntimeGizmos/Text"
                 OUT.metrics = float2(halfLen, halfW);
 
                 float4 clip;
-                if (worldMode)
+                if (mode > 1.5)
+                {
+                    // Якорь задан в пикселях экрана, начало в левом верхнем углу.
+                    float2 px = float2(IN.positionOS.x + p.x, IN.positionOS.y - p.y);
+                    float2 ndc;
+                    ndc.x = px.x / max(_ScreenParams.x, 1.0) * 2.0 - 1.0;
+                    ndc.y = 1.0 - px.y / max(_ScreenParams.y, 1.0) * 2.0;
+                    ndc.y *= _ProjectionParams.x;
+                    clip = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1.0);
+                }
+                else if (mode > 0.5)
                 {
                     // Смещения — в мировых единицах, разворачиваем билбордом по осям камеры.
                     // Метка уменьшается с расстоянием, как обычная геометрия.

@@ -2,10 +2,7 @@ using UnityEngine;
 
 namespace RuntimeGizmos
 {
-    /// <summary>
-    /// Плоский снимок разрешённой конфигурации. Читается через GizmoSettings.Current,
-    /// пересобирается только когда что-то поменяли — на горячем пути это одно обращение к полю.
-    /// </summary>
+    /// <summary>Снимок разрешённой конфигурации. Пересобирается только при изменениях.</summary>
     public struct GizmoConfig
     {
         /// <summary>Рисовать в игровых камерах, в том числе в билде.</summary>
@@ -50,7 +47,7 @@ namespace RuntimeGizmos
         /// <summary>Edit Mode: запрашивать перерисовку Scene View при появлении новой геометрии.</summary>
         public bool EditorAutoRepaint;
 
-        /// <summary>Загоняет значения в допустимые диапазоны — чтобы кривой ассет не ронял отрисовку.</summary>
+        /// <summary>Зажать в допустимые диапазоны, чтобы кривой ассет не ронял отрисовку.</summary>
         public void Sanitize()
         {
             Layer                 = Mathf.Clamp(Layer, 0, 31);
@@ -64,10 +61,7 @@ namespace RuntimeGizmos
             EditorStaleTimeout    = Mathf.Max(0f, EditorStaleTimeout);
         }
 
-        /// <summary>
-        /// Дефолты под платформу. Значения подобраны под то, как гизмо реально читаются
-        /// на конкретном экране, и под то, сколько на платформе можно себе позволить памяти.
-        /// </summary>
+        /// <summary>Дефолты под платформу.</summary>
         public static GizmoConfig DefaultsFor(GizmoPlatform platform)
         {
             var c = new GizmoConfig
@@ -84,9 +78,7 @@ namespace RuntimeGizmos
 
             switch (platform)
             {
-                // Экран близко и DPI высокий: волосяная линия в один физический пиксель
-                // почти не видна, поэтому по умолчанию уходим на путь через квады.
-                // Детализацию режем — фрагментов у мобильного GPU меньше, чем кажется.
+                // Высокий DPI: линия в один физический пиксель почти не видна.
                 case GizmoPlatform.Mobile:
                     c.DefaultLineWidth      = 2f;
                     c.CircleSegments        = 20;
@@ -95,8 +87,7 @@ namespace RuntimeGizmos
                     c.MaxVerticesPerChannel = 1 << 18;   // ~4 МБ тонкого канала
                     break;
 
-                // Куча WebGL фиксируется на старте и не растёт, поэтому потолок здесь
-                // самый жёсткий: лучше потерять лишнюю геометрию, чем словить OOM вкладки.
+                // Куча WebGL фиксируется на старте — потолок самый жёсткий.
                 case GizmoPlatform.Web:
                     c.DefaultLineWidth      = 2f;
                     c.CircleSegments        = 20;
@@ -105,8 +96,7 @@ namespace RuntimeGizmos
                     c.MaxVerticesPerChannel = 1 << 17;   // ~2 МБ тонкого канала
                     break;
 
-                // Всё рисуется дважды, по разу на глаз, и смотрят на это с фокусного
-                // расстояния в пару метров — линии нужны заметно толще.
+                // Рисуется дважды, по разу на глаз; фокус в паре метров.
                 case GizmoPlatform.XR:
                     c.DefaultLineWidth      = 3f;
                     c.CircleSegments        = 24;
@@ -115,7 +105,7 @@ namespace RuntimeGizmos
                     c.MaxVerticesPerChannel = 1 << 17;
                     break;
 
-                // Телевизор через комнату: детализация десктопная, линии толще.
+                // Телевизор через комнату.
                 case GizmoPlatform.Console:
                     c.DefaultLineWidth      = 2f;
                     c.CircleSegments        = 32;
@@ -133,10 +123,8 @@ namespace RuntimeGizmos
                     break;
             }
 
-            // Сдвиг глубины зависит не от платформы, а от того, какой буфер глубины
-            // у нас под ногами. Reversed-Z с float (D3D, Metal, Vulkan) даёт хорошую
-            // точность у камеры; прямой [0,1] на OpenGL/GLES/WebGL — заметно хуже,
-            // там тот же визуальный эффект стоит большего сдвига.
+            // Зависит не от платформы, а от буфера глубины: у прямого [0,1] в OpenGL,
+            // GLES и WebGL точности меньше, чем у reversed-Z с float.
             c.DepthBias = SystemInfo.usesReversedZBuffer ? 1e-4f : 3e-4f;
 
             return c;

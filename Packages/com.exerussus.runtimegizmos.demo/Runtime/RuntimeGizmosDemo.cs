@@ -29,6 +29,7 @@ namespace RuntimeGizmosDemo
             МешиИИконки,
             Цвета,
             Паттерны,
+            ЛенивaяОтладка,
             Настройки,
             Нагрузка,
         }
@@ -69,6 +70,14 @@ namespace RuntimeGizmosDemo
 
         void OnDisable()
         {
+            GizmoLazy.Clear();
+            if (_lazyTargets != null)
+            {
+                foreach (var t in _lazyTargets)
+                    if (t != null) { if (Application.isPlaying) Destroy(t.gameObject); else DestroyImmediate(t.gameObject); }
+                _lazyTargets = null;
+            }
+
             if (_occluder == null) return;
             if (Application.isPlaying) Destroy(_occluder);
             else DestroyImmediate(_occluder);
@@ -91,6 +100,7 @@ namespace RuntimeGizmosDemo
                 case Section.МешиИИконки:    Meshes(o); break;
                 case Section.Цвета:          Colors(o); break;
                 case Section.Паттерны:       Patterns(o); break;
+                case Section.ЛенивaяОтладка: Lazy(o); break;
                 case Section.Настройки:      SettingsView(o); break;
                 case Section.Нагрузка:       Stress(o); break;
             }
@@ -222,6 +232,15 @@ namespace RuntimeGizmosDemo
             float[] sizes = { 8f, 11f, 14f, 20f, 28f, 40f };
             for (int i = 0; i < sizes.Length; i++)
                 Gizmo.DrawText("размер " + sizes[i], o + Vector3.down * (2.3f + i * 0.55f), sizes[i]);
+
+            // Многострочный блок
+            Gizmo.DrawText("первая строка\nвторая\nтретья, длиннее прочих",
+                           o + new Vector3(-5f, 2.5f, 0f), 14f, Vector2.zero, GizmoTextAlign.Left);
+
+            // Экранный текст в углах
+            Gizmo.DrawScreenText("экран: TopRight", GizmoCorner.TopRight);
+            Gizmo.DrawScreenText("вторая строка стопкой", GizmoCorner.TopRight);
+            Gizmo.DrawScreenText("BottomLeft", GizmoCorner.BottomLeft);
 
             // Выравнивание относительно якоря
             var anchor = o + new Vector3(0f, -6.2f, 0f);
@@ -427,11 +446,82 @@ namespace RuntimeGizmosDemo
                              new Vector3(Mathf.Cos(t), Mathf.Sin(t), 0f) * 2f, 1f, "");
             Gizmo.color = Color.white;
 
+            // --- полосы, пунктир, кривые
+            float p01 = Mathf.PingPong(t * 0.3f, 1f);
+            Gizmo.color = Color.green;
+            Gizmo.DrawBar(o + new Vector3(-2f, 3f, 0f), p01);
+            Gizmo.DrawBarWorld(o + new Vector3(2f, 3f, 0f), p01, 1.2f, 0.15f);
+            Gizmo.color = Color.white;
+            Gizmo.DrawText("DrawBar: пиксели и мир", o + new Vector3(0f, 2.4f, 0f), 12f);
+
+            Gizmo.dash = 0.3f;
+            Gizmo.color = Color.cyan;
+            Gizmo.DrawLine(o + new Vector3(-6f, 1.5f, 0f), o + new Vector3(-1f, 1.5f, 0f));
+            Gizmo.DrawWireDisc(o + new Vector3(-6f, 0f, 4f), Vector3.up, 1.5f);
+            Gizmo.dash = 0f;
+
+            Gizmo.color = Color.yellow;
+            Gizmo.DrawTrajectory(o + new Vector3(-7f, -3f, 0f), new Vector3(4f, 6f, 0f), 2f);
+            Gizmo.DrawBezier(o + new Vector3(6f, -3f, 0f), o + new Vector3(7f, 1f, 0f),
+                             o + new Vector3(9f, -4f, 0f), o + new Vector3(10f, 0f, 0f));
+            Gizmo.color = new Color(0.4f, 0.4f, 0.5f);
+            Gizmo.DrawGrid(o + new Vector3(0f, -4f, 8f), Quaternion.identity,
+                           new Vector2(1f, 1f), new Vector2Int(8, 8));
+            Gizmo.color = Color.white;
+
             // --- точка попадания
             Gizmo.color = Color.red;
             Gizmo.DrawHit(o + new Vector3(2f, 1.5f, 0f), Quaternion.Euler(0f, 0f, t * 60f) * Vector3.up, 0.2f);
             Gizmo.color = Color.white;
             Gizmo.DrawText("DrawHit", o + new Vector3(2f, 0.9f, 0f), 12f);
+        }
+
+        // Слой GizmoLazy: регистрируем один раз, дальше он рисует сам, пока живы цели.
+        // Цели специально движутся — в этом весь смысл слоя.
+        Transform[] _lazyTargets;
+
+        void Lazy(Vector3 o)
+        {
+            EnsureLazyTargets(o);
+
+            float t = Time.realtimeSinceStartup;
+            for (int i = 0; i < _lazyTargets.Length; i++)
+            {
+                float a = t * 0.6f + i * Mathf.PI * 0.5f;
+                _lazyTargets[i].position = o + new Vector3(Mathf.Cos(a) * 3f, Mathf.Sin(a * 1.3f) * 1.5f, 0f);
+                _lazyTargets[i].rotation = Quaternion.Euler(0f, t * 50f + i * 40f, 0f);
+            }
+
+            // Сам раздел рисует только подсказку — всё остальное уже зарегистрировано.
+            Gizmo.color = Color.white;
+            Gizmo.lineWidth = 1f;
+            Gizmo.DrawText("живых регистраций: " + GizmoLazy.Count, o + Vector3.up * 3f, 16f);
+            Gizmo.DrawText("объекты движутся, а отрисовка следует за ними сама",
+                           o + Vector3.up * 2.4f, 13f);
+        }
+
+        void EnsureLazyTargets(Vector3 o)
+        {
+            if (_lazyTargets != null && _lazyTargets[0] != null) return;
+
+            _lazyTargets = new Transform[4];
+            for (int i = 0; i < 4; i++)
+            {
+                var go = new GameObject("~LazyTarget" + i) { hideFlags = HideFlags.DontSave };
+                go.transform.SetParent(transform, false);
+                _lazyTargets[i] = go.transform;
+            }
+
+            // Регистрируем по разу. Цикл идёт с ОДНОЙ строки, поэтому нужен .Key —
+            // без него все четыре записи схлопнулись бы в одну.
+            for (int i = 0; i < 4; i++)
+            {
+                var tr = _lazyTargets[i];
+                GizmoLazy.Track(tr).Key("vol" + i).Volume(Color.HSVToRGB(i / 4f, 0.8f, 1f));
+                GizmoLazy.Track(tr).Key("lbl" + i).Label("цель " + i, Color.white);
+                GizmoLazy.Track(tr).Key("fwd" + i).Forward(1.5f, Color.cyan);
+            }
+            GizmoLazy.Track(_lazyTargets[0]).Key("link").LinkTo(_lazyTargets[2], Color.green);
         }
 
         void SettingsView(Vector3 o)
@@ -500,6 +590,14 @@ namespace RuntimeGizmosDemo
                 Gizmo.Reset();
             }
 
+            if (Current == Section.ЛенивaяОтладка)
+            {
+                if (GUILayout.Button("Снять все регистрации")) GizmoLazy.Clear();
+                if (GUILayout.Button("Зарегистрировать заново")) { _lazyTargets = null; }
+                if (GUILayout.Button("Метка на 3 с у цели 0") && _lazyTargets != null)
+                    GizmoLazy.Track(_lazyTargets[0]).For(3f).Range(2f, Color.magenta);
+            }
+
             if (GUILayout.Button("Gizmo.Clear()")) Gizmo.Clear();
             if (GUILayout.Button("Настройки: сбросить")) GizmoSettings.ResetOverrides();
 
@@ -524,7 +622,7 @@ namespace RuntimeGizmosDemo
                 case Section.ТестГлубины:
                     return "Зелёная сфера уходит за куб, красная — рисуется поверх. Жёлтые линии лежат на самой поверхности куба: мерцание = z-файтинг, поднимай GizmoSettings.DepthBias.";
                 case Section.Текст:
-                    return "Латиница, кириллица, цифры, знаки. Выносные элементы у g j p q y и у д ц щ у ф. Неизвестный символ обязан дать пустой квадрат.\nСправа два ряда вглубь: белый (пиксели) не меняет размер, зелёный (DrawTextWorld) уменьшается. Отъедь камерой и сравни.";
+                    return "Латиница, кириллица, цифры, знаки. Слева многострочный блок, в углах экрана — DrawScreenText стопкой. Выносные элементы у g j p q y и у д ц щ у ф. Неизвестный символ обязан дать пустой квадрат.\nСправа два ряда вглубь: белый (пиксели) не меняет размер, зелёный (DrawTextWorld) уменьшается. Отъедь камерой и сравни.";
                 case Section.Длительность:
                     return "Розовый след живёт 2 секунды. Кнопка ставит метку на 3 секунды. Поставь Time.timeScale = 0 — след обязан продолжать жить и исчезать.";
                 case Section.МатрицаИScope:
@@ -534,7 +632,9 @@ namespace RuntimeGizmosDemo
                 case Section.Цвета:
                     return "Чистые цвета не должны выглядеть выцветшими или пересвеченными. Сравни с Color Space проекта в Player Settings.";
                 case Section.Паттерны:
-                    return "DrawLink соединяет два объекта: у каждого показан объём, линия обрезана по габаритам, на середине шеврон направления.\nОранжевым — DrawDimension: выносные линии и размерная со стрелками, как на чертеже. Остальное — DrawMeasure, DrawRange, DrawFieldOfView, DrawPath, DrawVector, DrawHit, DrawLabel.";
+                    return "DrawLink соединяет два объекта: у каждого показан объём, линия обрезана по габаритам, на середине шеврон направления.\nПолосы, пунктир, траектория, безье и сетка — тоже здесь. Оранжевым — DrawDimension: выносные линии и размерная со стрелками, как на чертеже. Остальное — DrawMeasure, DrawRange, DrawFieldOfView, DrawPath, DrawVector, DrawHit, DrawLabel.";
+                case Section.ЛенивaяОтладка:
+                    return "GizmoLazy: зарегистрировано один раз, дальше рисует само, пока живы цели. Объекты движутся — отрисовка следует за ними.\nЦикл по целям идёт с одной строки, поэтому там нужен .Key(): без него все записи схлопнулись бы в одну.";
                 case Section.Настройки:
                     return "Разрешённые значения. Переключи Build Target на Android — в редакторе платформа и толщина обязаны смениться сами.";
                 case Section.Нагрузка:

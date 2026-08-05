@@ -5,14 +5,8 @@ using Cond = System.Diagnostics.ConditionalAttribute;
 namespace RuntimeGizmos.Extensions
 {
     /// <summary>
-    /// Расширения для типов из UnityEngine.CoreModule.
-    ///
-    /// Живут в отдельном namespace специально: без <c>using RuntimeGizmos.Extensions;</c>
-    /// они не всплывают в автодополнении у каждого Transform в проекте.
-    ///
-    /// Все методы возвращают void — только так <c>[Conditional]</c> вырезает вызов из
-    /// релизного билда вместе с вычислением аргументов. Fluent-цепочка выглядела бы
-    /// красивее, но вырезаться перестала бы.
+    /// Расширения для UnityEngine.CoreModule. Отдельный namespace, чтобы без
+    /// <c>using RuntimeGizmos.Extensions;</c> не всплывать в автодополнении.
     /// </summary>
     public static class GizmoTransformExtensions
     {
@@ -22,12 +16,7 @@ namespace RuntimeGizmos.Extensions
 
         // ============================================================ Transform
 
-        /// <summary>
-        /// Габариты объекта со всеми рендерерами в иерархии: углы в полную силу,
-        /// контур и сечения приглушены. Основной способ показать «вот этот объект».
-        /// </summary>
-        /// <param name="t">Объект. null игнорируется.</param>
-        /// <param name="c">Цвет. Восстанавливается после вызова.</param>
+        /// <summary>Габариты со всеми рендерерами: углы ярко, контур приглушён.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(this Transform t, Color c)
         {
@@ -35,36 +24,22 @@ namespace RuntimeGizmos.Extensions
             using (Gizmo.Scope(c)) Gizmo.DrawVolume(t);
         }
 
-        /// <summary>Габариты текущим цветом <see cref="Gizmo.color"/>.</summary>
+        /// <summary>То же текущим цветом.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(this Transform t)
         {
             if (t != null) Gizmo.DrawVolume(t);
         }
 
-        /// <summary>
-        /// Подпись над объектом, поднятая над его габаритами.
-        /// </summary>
-        /// <param name="text">Текст. Пустой или null игнорируется.</param>
-        /// <param name="worldHeight">
-        /// 0 — размер в пикселях, метка одинакова на любой дистанции.
-        /// Больше нуля — высота буквы в юнитах, метка уменьшается с расстоянием.
-        /// </param>
+        /// <summary>Подпись над габаритами.</summary>
+        /// <param name="worldHeight">0 — пиксели, больше — высота буквы в юнитах.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawLabel(this Transform t, string text, float worldHeight = 0f)
         {
             if (t != null) Gizmo.DrawLabel(t, text, worldHeight);
         }
 
-        /// <summary>
-        /// Связь с другим объектом: у обоих показан объём, между ними линия, обрезанная
-        /// по границам габаритов, на середине шеврон направления this → other.
-        /// </summary>
-        /// <param name="label">
-        /// Подпись на середине связи. null — без подписи. Пустая строка тоже даёт
-        /// пустую подпись: у связи нет числа, которое имело бы смысл подставить,
-        /// в отличие от замеров.
-        /// </param>
+        /// <summary>Объёмы обоих, линия по границам, шеврон направления this → other.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawLinkTo(this Transform t, Transform other, Color c,
                                       float width = 2f, string label = null)
@@ -72,27 +47,21 @@ namespace RuntimeGizmos.Extensions
             if (t != null && other != null) Gizmo.DrawLink(t, other, c, width, label);
         }
 
-        /// <summary>Локальные оси объекта: X красная, Y зелёная, Z синяя.</summary>
+        /// <summary>Локальные оси: X красная, Y зелёная, Z синяя.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawAxes(this Transform t, float size = 1f)
         {
             if (t != null) Gizmo.DrawAxes(t.position, t.rotation, size);
         }
 
-        /// <summary>
-        /// Только направление «вперёд», стрелкой. Когда все три оси — визуальный шум,
-        /// а нужно понять, куда смотрит объект.
-        /// </summary>
+        /// <summary>Только направление вперёд, стрелкой.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawForward(this Transform t, float length = 1f)
         {
             if (t != null) Gizmo.DrawArrow(t.position, t.position + t.forward * length);
         }
 
-        /// <summary>
-        /// Простой каркасный ящик по габаритам, без приглушённых сечений.
-        /// Когда объект один и приглушать нечего.
-        /// </summary>
+        /// <summary>Каркасный ящик по габаритам, без приглушённых сечений.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawBounds(this Transform t, Color c)
         {
@@ -100,12 +69,9 @@ namespace RuntimeGizmos.Extensions
             using (Gizmo.Scope(c)) Gizmo.DrawBounds(Gizmo.WorldBounds(t));
         }
 
-        /// <summary>
-        /// Дерево иерархии: линии от каждого узла к его детям плюс точка в каждом узле.
-        /// Отладка ригов, процедурного спавна, сборки префабов в рантайме.
-        /// </summary>
-        /// <param name="maxDepth">Сколько уровней вглубь. 0 — только прямые дети.</param>
-        /// <param name="nodeSize">Размер точки в узле. 0 — не рисовать точки.</param>
+        /// <summary>Линии от узла к детям плюс точка в узле.</summary>
+        /// <param name="maxDepth">Уровней вглубь. 0 — только прямые дети.</param>
+        /// <param name="nodeSize">Точка в узле. 0 — не рисовать.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawHierarchy(this Transform t, Color c, int maxDepth = 8, float nodeSize = 0.03f)
         {
@@ -137,7 +103,7 @@ namespace RuntimeGizmos.Extensions
             using (Gizmo.Scope(c)) Gizmo.DrawBounds(b);
         }
 
-        /// <summary>Габариты в приглушённом стиле: яркие углы, приглушённый контур.</summary>
+        /// <summary>Яркие углы, приглушённый контур.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(this Bounds b, Color c)
         {
@@ -146,12 +112,9 @@ namespace RuntimeGizmos.Extensions
 
         // ============================================================ коллекции
 
-        /// <summary>
-        /// Маршрут по точкам: ломаная, маркеры узлов, шевроны направления.
-        /// </summary>
-        /// <param name="nodeSize">Размер маркера узла. 0 — не рисовать.</param>
+        /// <summary>Ломаная с узлами и шевронами.</summary>
+        /// <param name="nodeSize">Маркер узла. 0 — не рисовать.</param>
         /// <param name="arrowEvery">Шеврон каждые N сегментов. 0 — не рисовать.</param>
-        /// <param name="looped">Замкнуть последнюю точку с первой.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawPath(this IReadOnlyList<Vector3> points, Color c,
                                     float nodeSize = 0.08f, int arrowEvery = 1, bool looped = false)
@@ -159,30 +122,22 @@ namespace RuntimeGizmos.Extensions
             using (Gizmo.Scope(c)) Gizmo.DrawPath(points, nodeSize, arrowEvery, looped);
         }
 
-        /// <summary>Габариты сразу у всей коллекции объектов.</summary>
+        /// <summary>Габариты всей коллекции.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolumes(this IReadOnlyList<Transform> items, Color c)
         {
             if (items == null) return;
 
             using (Gizmo.Scope(c))
-                // Индексом, а не foreach: перебор через интерфейс боксирует перечислитель.
+                // Индексом: foreach через интерфейс боксирует перечислитель.
                 for (int i = 0; i < items.Count; i++)
                     if (items[i] != null) Gizmo.DrawVolume(items[i]);
         }
 
         // ============================================================ меши и рендереры
 
-        /// <summary>
-        /// Нормали меша — отрезки из каждой вершины. Отладка импорта ассетов, шейдинга,
-        /// вывернутых наизнанку полигонов.
-        ///
-        /// Мешу нужна галка Read/Write Enabled. Вершины и нормали читаются в
-        /// переиспользуемые списки, поэтому мусора вызов не создаёт.
-        /// </summary>
-        /// <param name="t">Трансформ, в котором меш находится.</param>
-        /// <param name="length">Длина отрезка нормали в юнитах.</param>
-        /// <param name="step">Брать каждую N-ю вершину. Для тяжёлых мешей ставьте больше 1.</param>
+        /// <summary>Отрезки нормалей из вершин. Мешу нужна галка Read/Write Enabled.</summary>
+        /// <param name="step">Брать каждую N-ю вершину.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawNormals(this Mesh mesh, Transform t, Color c,
                                        float length = 0.1f, int step = 1)
@@ -217,10 +172,7 @@ namespace RuntimeGizmos.Extensions
         static readonly List<Vector3> _verts = new List<Vector3>(1024);
         static readonly List<Vector3> _norms = new List<Vector3>(1024);
 
-        /// <summary>
-        /// Каркас меша в трансформе объекта. Каркасная версия строится один раз и кэшируется,
-        /// но мешу нужна галка Read/Write Enabled.
-        /// </summary>
+        /// <summary>Каркас меша. Кэшируется, но мешу нужна галка Read/Write Enabled.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWire(this Mesh mesh, Transform t, Color c)
         {
@@ -228,10 +180,7 @@ namespace RuntimeGizmos.Extensions
             using (Gizmo.Scope(c)) Gizmo.DrawWireMesh(mesh, t.position, t.rotation, t.lossyScale);
         }
 
-        /// <summary>
-        /// Мировой AABB рендерера — ровно тот ящик, по которому его куллит камера.
-        /// Полезно, когда объект пропадает с экрана раньше, чем ожидалось.
-        /// </summary>
+        /// <summary>Мировой AABB — тот ящик, по которому объект куллит камера.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawBounds(this Renderer r, Color c)
         {
@@ -241,7 +190,7 @@ namespace RuntimeGizmos.Extensions
 
         // ============================================================ камера, свет, UI
 
-        /// <summary>Пирамида видимости камеры по её текущим настройкам.</summary>
+        /// <summary>Пирамида видимости.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawFrustum(this Camera cam, Color c)
         {
@@ -249,11 +198,7 @@ namespace RuntimeGizmos.Extensions
             using (Gizmo.Scope(c)) Gizmo.DrawFrustum(cam);
         }
 
-        /// <summary>
-        /// Зона действия источника света: точечный — сфера радиуса range, прожектор —
-        /// конус по spotAngle, направленный — стрелка вдоль forward. Остальные типы
-        /// рисуются габаритной сферой.
-        /// </summary>
+        /// <summary>Точечный — сфера, прожектор — конус, направленный — стрелка.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawRange(this Light light, Color c)
         {
@@ -264,7 +209,7 @@ namespace RuntimeGizmos.Extensions
                 switch (light.type)
                 {
                     case LightType.Spot:
-                        // DrawWireCone принимает ПОЛОВИНУ угла раствора, а spotAngle — полный.
+                        // DrawWireCone берёт половину угла, spotAngle — полный.
                         Gizmo.DrawWireCone(t.position, t.forward, light.spotAngle * 0.5f, light.range);
                         break;
 
@@ -279,16 +224,12 @@ namespace RuntimeGizmos.Extensions
                 }
         }
 
-        /// <summary>
-        /// Четыре мировых угла RectTransform. Отладка UI, который «не там, где нарисован»:
-        /// вылез за Canvas, схлопнулся в ноль, уехал по anchors.
-        /// </summary>
+        /// <summary>Четыре мировых угла — где элемент на самом деле.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWorldCorners(this RectTransform rt, Color c)
         {
             if (rt == null) return;
 
-            // Массив переиспользуется: GetWorldCorners пишет в переданный, а не создаёт свой.
             rt.GetWorldCorners(_corners);
 
             using (Gizmo.Scope(c))

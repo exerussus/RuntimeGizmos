@@ -59,6 +59,22 @@ namespace RuntimeGizmos.Internal
         internal static float Width;      // <=1 → тонкая линия (MeshTopology.Lines)
         internal static int Z;            // 0 = с тестом глубины, 1 = поверх всего
         internal static float Duration;   // 0 = один кадр
+        internal static float Dash;       // период пунктира в юнитах, 0 = сплошная
+
+        // Накопитель длины вдоль ломаной: без него у каждого сегмента фаза начиналась
+        // бы с нуля и штрихи ломались на каждом изломе пути.
+        internal static float DashRun;
+
+        // Фаза для отрезка [a,b]. Возвращает -1 у сплошных линий.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static void DashPhase(in Vector3 a, in Vector3 b, out float pa, out float pb)
+        {
+            if (Dash <= 0f) { pa = -1f; pb = -1f; return; }
+            float inv = 1f / Dash;
+            pa = DashRun * inv;
+            DashRun += (b - a).magnitude;
+            pb = DashRun * inv;
+        }
         internal static float Now;
 
         internal static readonly int MainTexId = Shader.PropertyToID("_MainTex");
@@ -75,8 +91,8 @@ namespace RuntimeGizmos.Internal
 
         static Material[] _thinMat, _wideMat, _triMat, _meshMat, _iconMat, _screenMat;
 
-        static readonly Dictionary<int, GizmoTexturedBatch> _icons = new Dictionary<int, GizmoTexturedBatch>();
-        static readonly Dictionary<int, GizmoTexturedBatch> _screen = new Dictionary<int, GizmoTexturedBatch>();
+        static readonly Dictionary<GizmoObjectId, GizmoTexturedBatch> _icons = new Dictionary<GizmoObjectId, GizmoTexturedBatch>();
+        static readonly Dictionary<GizmoObjectId, GizmoTexturedBatch> _screen = new Dictionary<GizmoObjectId, GizmoTexturedBatch>();
 
         static GizmoMeshCmdList _meshFront = new GizmoMeshCmdList();
         static GizmoMeshCmdList _meshBack = new GizmoMeshCmdList();
@@ -308,15 +324,17 @@ namespace RuntimeGizmos.Internal
                 _meshFront.Clear();
             }
 
+            ResetCorners();
+            DashRun = 0f;
             HasProducedData = false;
 
             // Штамп для команд следующего кадра.
             Now = Time.realtimeSinceStartup;
         }
 
-        static readonly List<int> _deadBatches = new List<int>();
+        static readonly List<GizmoObjectId> _deadBatches = new List<GizmoObjectId>();
 
-        static void PruneDeadBatches(Dictionary<int, GizmoTexturedBatch> batches)
+        static void PruneDeadBatches(Dictionary<GizmoObjectId, GizmoTexturedBatch> batches)
         {
             if (batches.Count == 0) return;
 
@@ -504,10 +522,11 @@ namespace RuntimeGizmos.Internal
         /// false — размер в пикселях, метка одинакова на любом расстоянии.
         /// true — размер в мировых единицах, метка уменьшается с расстоянием.
         /// </param>
-        internal static unsafe void Text(string text, Vector3 anchor, float sizePx, Vector2 pixelOffset,
-                                         float align, bool worldSpace = false)
+        /// <param name="mode">0 — пиксели от мирового якоря, 1 — мировые единицы, 2 — пиксели экрана.</param>
+        internal static unsafe void Text(string text, Vector3 anchor, float size, Vector2 offset,
+                                         float align, int mode = 0)
         {
-            if (string.IsNullOrEmpty(text) || sizePx <= 0f) return;
+            if (string.IsNullOrEmpty(text) || size <= 0f) return;
             if (!Begin()) return;
 
             GizmoFont.Ensure();
@@ -517,69 +536,157 @@ namespace RuntimeGizmos.Internal
             var buf = ch.Target(ret);
             var col = Color;
 
-            // В пиксельном режиме lineWidth — это пиксели. В мировом привязываем толщину
-            // к высоте буквы, иначе на расстоянии текст схлопнется в кляксу: lineWidth = 1
-            // даёт штрих в 1/12 высоты прописной, 2 — вдвое жирнее.
-            // Знак несёт режим: шейдер читает минус как «мировые единицы».
-            float strokeW = worldSpace
-                ? -(sizePx * Mathf.Max(0.25f, Width) / 12f)
+            float scale = size / GizmoFont.CapHeight;
+
+            // В мировом режиме толщина привязана к высоте буквы, иначе на дистанции
+            // текст схлопнулся бы в кляксу: lineWidth = 1 даёт штрих в 1/12 высоты.
+            float stroke = mode == 1
+                ? size * Mathf.Max(0.25f, Width) / 12f
                 : Mathf.Max(1f, Width);
 
-            float scale = sizePx / GizmoFont.CapHeight;
+            GizmoFont.Measure(text, out int lines, out _);
 
-            // align: 0 — влево от якоря, 0.5 — по центру, 1 — вправо.
-            float penX = pixelOffset.x - GizmoFont.Width(text) * scale * align;
-            float baseY = pixelOffset.y - GizmoFont.Baseline * scale;
+            float lineStep = GizmoFont.LineStep * scale;
+            float top = offset.y + (lines - 1) * lineStep * 0.5f;   // блок центрируется по вертикали
 
             var segs = GizmoFont.Segments;
             float expiry = Now + Duration;
+            int start = 0;
 
-            for (int i = 0; i < text.Length; i++)
+            for (int li = 0; li < lines; li++)
             {
-                if (GizmoFont.Glyph(text[i], out int s0, out int n))
+                int nl = text.IndexOf('\n', start);
+                int stop = nl < 0 ? text.Length : nl;
+                int len = stop - start;
+                if (len > 0 && text[stop - 1] == '\r') len--;
+
+                float penX = offset.x - GizmoFont.LineWidth(len) * scale * align;
+                float baseY = top - li * lineStep - GizmoFont.Baseline * scale;
+
+                for (int i = 0; i < len; i++)
                 {
-                    for (int k = 0; k < n; k++)
+                    if (GizmoFont.Glyph(text[start + i], out int s0, out int n))
                     {
-                        Vector4 g = segs[s0 + k];
-                        var p0 = new Vector2(penX + g.x * scale, baseY + g.y * scale);
-                        var p1 = new Vector2(penX + g.z * scale, baseY + g.w * scale);
-
-                        var v = buf.Reserve(6);
-
-                        // Концы отрезка НЕ переставляем местами: обе вершины должны
-                        // считать одну и ту же локальную систему, иначе интерполировать
-                        // по кваду нечего и сглаживание в шейдере поедет. Признак конца
-                        // едет в модуле поля стороны: 1 — начало, 2 — конец.
-                        SetText(v + 0, anchor, col, p0, p1, -1f, strokeW);
-                        SetText(v + 1, anchor, col, p0, p1, +1f, strokeW);
-                        SetText(v + 2, anchor, col, p0, p1, +2f, strokeW);
-                        SetText(v + 3, anchor, col, p0, p1, -1f, strokeW);
-                        SetText(v + 4, anchor, col, p0, p1, +2f, strokeW);
-                        SetText(v + 5, anchor, col, p0, p1, -2f, strokeW);
-
-                        if (ret)
+                        for (int k = 0; k < n; k++)
                         {
-                            var e = ch.RetainedExpiry.Reserve(6);
-                            for (int q = 0; q < 6; q++) e[q] = expiry;
+                            Vector4 g = segs[s0 + k];
+                            var p0 = new Vector2(penX + g.x * scale, baseY + g.y * scale);
+                            var p1 = new Vector2(penX + g.z * scale, baseY + g.w * scale);
+
+                            var v = buf.Reserve(6);
+
+                            // Концы не переставляем: обе вершины квада должны считать одну
+                            // локальную систему. Признак конца — в модуле поля стороны.
+                            SetText(v + 0, anchor, col, p0, p1, -1f, stroke, mode);
+                            SetText(v + 1, anchor, col, p0, p1, +1f, stroke, mode);
+                            SetText(v + 2, anchor, col, p0, p1, +2f, stroke, mode);
+                            SetText(v + 3, anchor, col, p0, p1, -1f, stroke, mode);
+                            SetText(v + 4, anchor, col, p0, p1, +2f, stroke, mode);
+                            SetText(v + 5, anchor, col, p0, p1, -2f, stroke, mode);
+
+                            if (ret)
+                            {
+                                var e = ch.RetainedExpiry.Reserve(6);
+                                for (int q = 0; q < 6; q++) e[q] = expiry;
+                            }
                         }
                     }
+
+                    penX += GizmoFont.Advance * scale;
                 }
 
-                penX += GizmoFont.Advance * scale;
+                if (nl < 0) break;
+                start = nl + 1;
             }
 
-            buf.Encapsulate(anchor);
+            if (mode != 2) buf.Encapsulate(anchor);
+        }
+
+        /// <summary>Полоса: фон во всю ширину и заливка поверх. Рисуется каналом текста,
+        /// поэтому разворачивается к камере тем же способом.</summary>
+        internal static unsafe void Bar(Vector3 anchor, float t, float width, float height,
+                                        in Color fill, in Color back, Vector2 offset, int mode)
+        {
+            if (!Begin() || width <= 0f || height <= 0f) return;
+
+            var ch = _text[Z];
+            bool ret = Duration > 0f;
+            var buf = ch.Target(ret);
+            float expiry = Now + Duration;
+
+            float half = width * 0.5f;
+            float y = offset.y;
+            t = Mathf.Clamp01(t);
+
+            Seg(offset.x - half, offset.x + half, back);
+            if (t > 0f) Seg(offset.x - half, offset.x - half + width * t, fill);
+
+            if (mode != 2) buf.Encapsulate(anchor);
+
+            void Seg(float x0, float x1, in Color c)
+            {
+                // Торцы у капсулы круглые, поэтому укорачиваем на полтолщины —
+                // иначе полоса окажется шире заказанной.
+                float r = height * 0.5f;
+                var p0 = new Vector2(x0 + r, y);
+                var p1 = new Vector2(Mathf.Max(x1 - r, x0 + r), y);
+                Color32 c32 = c;
+
+                var v = buf.Reserve(6);
+                SetText(v + 0, anchor, c32, p0, p1, -1f, height, mode);
+                SetText(v + 1, anchor, c32, p0, p1, +1f, height, mode);
+                SetText(v + 2, anchor, c32, p0, p1, +2f, height, mode);
+                SetText(v + 3, anchor, c32, p0, p1, -1f, height, mode);
+                SetText(v + 4, anchor, c32, p0, p1, +2f, height, mode);
+                SetText(v + 5, anchor, c32, p0, p1, -2f, height, mode);
+
+                if (!ret) return;
+                var e = ch.RetainedExpiry.Reserve(6);
+                for (int q = 0; q < 6; q++) e[q] = expiry;
+            }
+        }
+
+        static readonly int[] _cornerLines = new int[4];
+
+        internal static void ResetCorners() { for (int i = 0; i < 4; i++) _cornerLines[i] = 0; }
+
+        internal static void CornerText(string text, GizmoCorner corner, float size)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
+            const float pad = 8f;
+            int idx = (int)corner;
+            GizmoFont.Measure(text, out int lines, out _);
+
+            float step = GizmoFont.LineStep * (size / GizmoFont.CapHeight);
+            float used = _cornerLines[idx] * step;
+            _cornerLines[idx] += lines;
+
+            bool right = corner == GizmoCorner.TopRight || corner == GizmoCorner.BottomRight;
+            bool bottom = corner == GizmoCorner.BottomLeft || corner == GizmoCorner.BottomRight;
+
+            float x = right ? Screen.width - pad : pad;
+            float y = bottom
+                ? Screen.height - pad - used - (lines - 1) * step
+                : pad + used + (lines - 1) * step * 0.5f;
+
+            // Многострочный блок центрируется по вертикали вокруг якоря — компенсируем,
+            // чтобы стопка в углу шла ровно.
+            if (!bottom) y = pad + used + (lines - 1) * step * 0.5f;
+
+            Text(text, new Vector3(x, y, 0f), size, Vector2.zero,
+                 right ? 1f : 0f, 2);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static unsafe void SetText(GizmoTextVertex* v, in Vector3 anchor, in Color32 c,
-                                   in Vector2 offset, in Vector2 other, float side, float width)
+                                   in Vector2 offset, in Vector2 other, float side, float width, int mode)
         {
             v->Position = anchor;
             v->Color = c;
             v->Offset = offset;
             v->Other = other;
-            v->SideWidth = new Vector2(side, width);
+            v->Params = new Vector3(side, width, mode);
         }
 
         static void ThinLine(in Vector3 a, in Vector3 b)
@@ -589,8 +696,9 @@ namespace RuntimeGizmos.Internal
             var buf = ch.Target(ret);
             var p = buf.Reserve(2);
             var c = Color;
-            p[0].Position = a; p[0].Color = c;
-            p[1].Position = b; p[1].Color = c;
+            DashPhase(a, b, out float da, out float db);
+            p[0].Position = a; p[0].Color = c; p[0].Dash = da;
+            p[1].Position = b; p[1].Color = c; p[1].Dash = db;
             buf.Encapsulate(a); buf.Encapsulate(b);
             if (ret)
             {
@@ -611,12 +719,13 @@ namespace RuntimeGizmos.Internal
 
             // Два треугольника. Сторона у конца B инвертируется, потому что направление
             // отрезка в шейдере считается как normalize(Other - Position).
-            p[0].Position = a; p[0].Other = b; p[0].Color = c; p[0].Params = new Vector2(-1f, w);
-            p[1].Position = a; p[1].Other = b; p[1].Color = c; p[1].Params = new Vector2(+1f, w);
-            p[2].Position = b; p[2].Other = a; p[2].Color = c; p[2].Params = new Vector2(+1f, w);
-            p[3].Position = b; p[3].Other = a; p[3].Color = c; p[3].Params = new Vector2(+1f, w);
-            p[4].Position = a; p[4].Other = b; p[4].Color = c; p[4].Params = new Vector2(+1f, w);
-            p[5].Position = b; p[5].Other = a; p[5].Color = c; p[5].Params = new Vector2(-1f, w);
+            DashPhase(a, b, out float da, out float db);
+            p[0].Position = a; p[0].Other = b; p[0].Color = c; p[0].Params = new Vector3(-1f, w, da);
+            p[1].Position = a; p[1].Other = b; p[1].Color = c; p[1].Params = new Vector3(+1f, w, da);
+            p[2].Position = b; p[2].Other = a; p[2].Color = c; p[2].Params = new Vector3(+1f, w, db);
+            p[3].Position = b; p[3].Other = a; p[3].Color = c; p[3].Params = new Vector3(+1f, w, db);
+            p[4].Position = a; p[4].Other = b; p[4].Color = c; p[4].Params = new Vector3(+1f, w, da);
+            p[5].Position = b; p[5].Other = a; p[5].Color = c; p[5].Params = new Vector3(-1f, w, db);
 
             buf.Encapsulate(a); buf.Encapsulate(b);
             if (ret)
@@ -636,9 +745,9 @@ namespace RuntimeGizmos.Internal
             var buf = ch.Target(ret);
             var p = buf.Reserve(3);
             var col = Color;
-            p[0].Position = a; p[0].Color = col;
-            p[1].Position = b; p[1].Color = col;
-            p[2].Position = c; p[2].Color = col;
+            p[0].Position = a; p[0].Color = col; p[0].Dash = -1f;
+            p[1].Position = b; p[1].Color = col; p[1].Dash = -1f;
+            p[2].Position = c; p[2].Color = col; p[2].Dash = -1f;
             buf.Encapsulate(a); buf.Encapsulate(b); buf.Encapsulate(c);
             if (ret)
             {
@@ -665,11 +774,25 @@ namespace RuntimeGizmos.Internal
             var buf = ch.Target(ret);
             var p = buf.Reserve(n);
             var c = Color;
+            float inv = Dash > 0f ? 1f / Dash : 0f;
+            var prev = Vector3.zero;
+
             for (int i = 0; i < n; i++)
             {
                 var w = m.MultiplyPoint3x4(src[i]);
                 p[i].Position = w;
                 p[i].Color = c;
+
+                if (inv == 0f) p[i].Dash = -1f;
+                else
+                {
+                    // Точки идут парами: у начала каждой пары фаза продолжается,
+                    // у конца — прирастает длиной отрезка.
+                    if ((i & 1) == 1) DashRun += (w - prev).magnitude;
+                    p[i].Dash = DashRun * inv;
+                }
+
+                prev = w;
                 buf.Encapsulate(w);
             }
             if (ret)
@@ -695,6 +818,7 @@ namespace RuntimeGizmos.Internal
                 var w = m.MultiplyPoint3x4(src[i]);
                 p[i].Position = w;
                 p[i].Color = c;
+                p[i].Dash = -1f;      // буфер выделен неинициализированным
                 buf.Encapsulate(w);
             }
             if (ret)
@@ -732,7 +856,7 @@ namespace RuntimeGizmos.Internal
         {
             if (!Begin() || tex == null) return;
 
-            int id = tex.GetInstanceID();
+            var id = GizmoObjectId.Of(tex);
             if (!_icons.TryGetValue(id, out var batch))
             {
                 batch = new GizmoTexturedBatch(tex, "icon" + id);
@@ -748,7 +872,7 @@ namespace RuntimeGizmos.Internal
         {
             if (!Begin() || tex == null) return;
 
-            int id = tex.GetInstanceID();
+            var id = GizmoObjectId.Of(tex);
             if (!_screen.TryGetValue(id, out var batch))
             {
                 batch = new GizmoTexturedBatch(tex, "screen" + id);
@@ -830,7 +954,7 @@ namespace RuntimeGizmos.Internal
     {
         struct Entry { public Mesh Source; public Mesh Wire; }
 
-        static readonly Dictionary<int, Entry> _cache = new Dictionary<int, Entry>();
+        static readonly Dictionary<GizmoMeshKey, Entry> _cache = new Dictionary<GizmoMeshKey, Entry>();
         static readonly List<Vector3> _verts = new List<Vector3>();
         static readonly List<int> _tris = new List<int>();
         static readonly List<int> _lines = new List<int>();
@@ -848,7 +972,7 @@ namespace RuntimeGizmos.Internal
             // дали бы два разных ключа и две одинаковые копии каркаса.
             submesh = Mathf.Clamp(submesh, 0, subCount - 1);
 
-            int key = src.GetInstanceID() * 397 ^ submesh;
+            var key = new GizmoMeshKey(src, submesh);
             if (_cache.TryGetValue(key, out var e))
             {
                 // Instance ID может быть переиспользован после выгрузки ассета — сверяем источник,
@@ -899,7 +1023,7 @@ namespace RuntimeGizmos.Internal
         // Источник могли выгрузить — тогда каркас держать незачем. Чистим редко и только
         // по достижении порога, чтобы не платить за обход каждый кадр.
         const int PurgeAt = 64;
-        static readonly List<int> _dead = new List<int>();
+        static readonly List<GizmoMeshKey> _dead = new List<GizmoMeshKey>();
 
         static void Purge()
         {

@@ -56,7 +56,7 @@ Shader "Hidden/RuntimeGizmos/WideLine"
                 float4 positionOS : POSITION;   // этот конец отрезка
                 float3 other      : NORMAL;     // противоположный конец
                 half4  color      : COLOR;
-                float2 uv         : TEXCOORD0;  // x = сторона (-1/+1), y = ширина в пикселях
+                float3 uv         : TEXCOORD0;  // x = сторона, y = ширина в пикселях, z = фаза пунктира
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -64,6 +64,7 @@ Shader "Hidden/RuntimeGizmos/WideLine"
             {
                 float4 positionCS : SV_POSITION;
                 half4  color      : COLOR;
+                float  dash       : TEXCOORD0;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -103,12 +104,15 @@ Shader "Hidden/RuntimeGizmos/WideLine"
                 half4 c = IN.color;
                 c.rgb = GizmoDecodeColor(c.rgb);
                 OUT.color = c;
+                OUT.dash = IN.uv.z;
                 return OUT;
             }
 
             half4 frag (Varyings IN) : SV_Target
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(IN);
+                if (IN.dash >= 0.0 && frac(IN.dash) > 0.5) discard;
+
                 half4 c = IN.color;
                 c.a *= _Alpha;
                 return c;

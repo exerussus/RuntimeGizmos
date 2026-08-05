@@ -1,29 +1,21 @@
 using System.Collections.Generic;
 using UnityEngine;
+using RuntimeGizmos.Internal;
 using Cond = System.Diagnostics.ConditionalAttribute;
 
 namespace RuntimeGizmos
 {
-    /// <summary>
-    /// Готовые паттерны поверх базовых примитивов — то, что в проектах приходится
-    /// собирать заново в каждом дебажном скрипте.
-    ///
-    /// Все они вырезаются из релиза так же, как обычные Draw*, и уважают текущие
-    /// color / matrix / depthTest / duration.
-    /// </summary>
+    /// <summary>Готовые сборки поверх примитивов.</summary>
     public static partial class Gizmo
     {
         // ================================================================= объём
 
         /// <summary>
-        /// Габариты объекта, читаемые с одного взгляда и не забивающие кадр.
-        ///
-        /// Углы рисуются в полную силу — именно они читают размер, — а полный контур
-        /// и три сечения через центр приглушаются. Получается ощущение объёма без
-        /// каши из двенадцати рёбер, которую даёт обычный wire-куб.
+        /// Углы в полную силу, контур и три сечения приглушены. Так десяток объёмов
+        /// в кадре не превращается в кашу из рёбер.
         /// </summary>
-        /// <param name="cornerFraction">Какую долю ребра занимает уголок, 0.02..0.5.</param>
-        /// <param name="faint">Множитель альфы для контура и сечений.</param>
+        /// <param name="cornerFraction">Доля ребра под уголок, 0.02..0.5.</param>
+        /// <param name="faint">Множитель альфы контура и сечений.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(Vector3 center, Quaternion rotation, Vector3 size,
                                       float cornerFraction = 0.22f, float faint = 0.28f)
@@ -59,7 +51,7 @@ namespace RuntimeGizmos
         public static void DrawVolume(Bounds worldBounds, float cornerFraction = 0.22f, float faint = 0.28f)
             => DrawVolume(worldBounds.center, Quaternion.identity, worldBounds.size, cornerFraction, faint);
 
-        /// <summary>Габариты объекта вместе со всеми его рендерерами.</summary>
+        /// <summary>Габариты со всеми рендерерами в иерархии.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(Transform t, float cornerFraction = 0.22f, float faint = 0.28f)
         {
@@ -67,7 +59,7 @@ namespace RuntimeGizmos
             DrawVolume(WorldBounds(t), cornerFraction, faint);
         }
 
-        // Прямоугольник в плоскости, где одна компонента полуразмера равна нулю.
+        // Плоскость задаётся нулевой компонентой полуразмера.
         static void PlaneRect(Vector3 c, Quaternion r, Vector3 e)
         {
             Vector3 a, b;
@@ -82,18 +74,14 @@ namespace RuntimeGizmos
             DrawLine(p0, p1); DrawLine(p1, p2); DrawLine(p2, p3); DrawLine(p3, p0);
         }
 
-        /// <summary>
-        /// Габариты объекта со всеми рендерерами в иерархии. Если рендереров нет —
-        /// маленький куб в точке трансформа, чтобы объект всё равно было видно.
-        /// </summary>
+        /// <summary>Габариты со всеми рендерерами. Без них — куб 0.25 в точке трансформа.</summary>
         static readonly List<Renderer> _rendererBuffer = new List<Renderer>(32);
 
         public static Bounds WorldBounds(Transform t)
         {
             if (t == null) return new Bounds(Vector3.zero, Vector3.zero);
 
-            // Перегрузка со списком, а не GetComponentsInChildren<Renderer>() — та отдаёт
-            // НОВЫЙ массив на каждый вызов, то есть мусор каждый кадр. Список переиспользуется.
+            // Перегрузка со списком: GetComponentsInChildren<Renderer>() отдаёт новый массив.
             _rendererBuffer.Clear();
             t.GetComponentsInChildren(_rendererBuffer);
 
@@ -117,12 +105,7 @@ namespace RuntimeGizmos
         // ================================================================= связь
 
         /// <summary>
-        /// Связь между двумя объектами: у каждого показывается объём, между ними идёт
-        /// линия, обрезанная по границам габаритов, а на середине стоит шеврон,
-        /// показывающий направление from → to.
-        ///
-        /// Основной паттерн для отладки ссылок: цель у ИИ, владелец у предмета,
-        /// родитель в графе, кто на кого агрится.
+        /// Объёмы обоих, линия между ними по границам габаритов, шеврон направления.
         /// </summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawLink(Transform from, Transform to, Color linkColor,
@@ -151,7 +134,7 @@ namespace RuntimeGizmos
             {
                 d /= dist;
 
-                // Обрезаем линию по габаритам, чтобы она не ныряла внутрь объектов.
+                // Обрезка по габаритам, чтобы линия не ныряла внутрь.
                 float start = SupportAlong(from.extents, d);
                 float end = dist - SupportAlong(to.extents, d);
 
@@ -173,7 +156,7 @@ namespace RuntimeGizmos
             lineWidth = prevWidth;
         }
 
-        // Насколько далеко габаритный ящик простирается вдоль направления.
+        // Опорная функция ящика вдоль направления.
         static float SupportAlong(Vector3 extents, Vector3 dir) =>
             Mathf.Abs(dir.x) * extents.x + Mathf.Abs(dir.y) * extents.y + Mathf.Abs(dir.z) * extents.z;
 
@@ -189,9 +172,7 @@ namespace RuntimeGizmos
         // ================================================================= подпись
 
         /// <summary>
-        /// Подпись над объектом, поднятая над его габаритами. worldHeight = 0 —
-        /// размер в пикселях (одинаков на любой дистанции), больше нуля — в юнитах
-        /// (уменьшается с расстоянием, как ник над игроком).
+        /// Подпись над габаритами. worldHeight = 0 — пиксели, больше — юниты.
         /// </summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawLabel(Transform t, string text, float worldHeight = 0f)
@@ -207,12 +188,9 @@ namespace RuntimeGizmos
 
         // ================================================================= путь
 
-        /// <summary>
-        /// Маршрут по точкам: ломаная, узлы и шевроны направления. Для патрульных
-        /// путей, найденной навигации, записанной траектории.
-        /// </summary>
-        /// <param name="nodeSize">Размер маркера узла. 0 — не рисовать.</param>
-        /// <param name="arrowEvery">Ставить шеврон каждые N сегментов. 0 — не ставить.</param>
+        /// <summary>Ломаная с узлами и шевронами направления.</summary>
+        /// <param name="nodeSize">Маркер узла. 0 — не рисовать.</param>
+        /// <param name="arrowEvery">Шеврон каждые N сегментов. 0 — не ставить.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawPath(IReadOnlyList<Vector3> points, float nodeSize = 0.08f,
                                     int arrowEvery = 1, bool looped = false)
@@ -240,11 +218,8 @@ namespace RuntimeGizmos
 
         // ================================================================= вектор
 
-        /// <summary>
-        /// Вектор из точки со стрелкой и, если нужно, подписью. Скорость, сила,
-        /// нормаль, направление взгляда.
-        /// </summary>
-        /// <param name="label">null — без подписи, "" — подписать длиной вектора.</param>
+        /// <summary>Вектор стрелкой.</summary>
+        /// <param name="label">null — без подписи, "" — подписать длиной.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVector(Vector3 origin, Vector3 vector, float scale = 1f, string label = null)
         {
@@ -265,9 +240,8 @@ namespace RuntimeGizmos
         // ================================================================= радиус
 
         /// <summary>
-        /// Игровой радиус на земле: окружность в горизонтальной плоскости плюс,
-        /// если задана высота, вторая окружность и вертикальные стойки. Для радиуса
-        /// атаки, агро, подбора — читается лучше, чем сфера.
+        /// Окружность на земле, при height &gt; 0 — вторая сверху и четыре стойки.
+        /// Читается лучше сферы.
         /// </summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawRange(Vector3 center, float radius, float height = 0f)
@@ -290,10 +264,7 @@ namespace RuntimeGizmos
 
         // ================================================================= обзор
 
-        /// <summary>
-        /// Сектор обзора в горизонтальной плоскости: две кромки и дуга между ними.
-        /// Для зоны видимости ИИ, конуса атаки, области срабатывания.
-        /// </summary>
+        /// <summary>Две кромки и дуга между ними, в горизонтальной плоскости.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawFieldOfView(Vector3 origin, Vector3 forward, float angleDeg, float distance)
         {
@@ -312,15 +283,110 @@ namespace RuntimeGizmos
             DrawWireArc(origin, Vector3.up, left, angleDeg, distance);
         }
 
-        // ================================================================= размеры
+        // ================================================================= полоса
 
         /// <summary>
-        /// Двухсторонняя стрелка от точки к точке — простейший замер.
+        /// Полоса заполнения, развёрнутая к камере: здоровье, откат, прогресс.
+        /// Размеры в пикселях, поэтому читается одинаково на любой дистанции.
         /// </summary>
-        /// <param name="label">
-        /// Пустая строка — подставить расстояние, null — без подписи, иначе свой текст.
-        /// </param>
-        /// <param name="arrowSize">Длина стрелки в юнитах. 0 — подобрать от длины замера.</param>
+        /// <param name="t">Заполнение 0..1.</param>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawBar(Vector3 position, float t, float widthPixels = 48f,
+                                   float heightPixels = 6f, float pixelOffsetY = 0f)
+        {
+            var c = color;
+            var back = new Color(c.r * 0.25f, c.g * 0.25f, c.b * 0.25f, c.a * 0.8f);
+            GizmoRenderer.Bar(Xf(position), t, widthPixels, heightPixels, c, back,
+                              new Vector2(0f, pixelOffsetY), 0);
+        }
+
+        /// <summary>Полоса с явными цветами заливки и фона.</summary>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawBar(Vector3 position, float t, Color fill, Color back,
+                                   float widthPixels = 48f, float heightPixels = 6f, float pixelOffsetY = 0f)
+            => GizmoRenderer.Bar(Xf(position), t, widthPixels, heightPixels, fill, back,
+                                 new Vector2(0f, pixelOffsetY), 0);
+
+        /// <summary>Полоса размером в мировых единицах — уменьшается с расстоянием.</summary>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawBarWorld(Vector3 position, float t, float width = 0.6f,
+                                        float height = 0.08f, float offsetY = 0f)
+        {
+            var c = color;
+            var back = new Color(c.r * 0.25f, c.g * 0.25f, c.b * 0.25f, c.a * 0.8f);
+            GizmoRenderer.Bar(Xf(position), t, width, height, c, back, new Vector2(0f, offsetY), 1);
+        }
+
+        // ================================================================= кривые и сетки
+
+        /// <summary>
+        /// Баллистическая траектория. Гравитация по умолчанию земная, чтобы паттерн
+        /// не тянул модуль физики.
+        /// </summary>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawTrajectory(Vector3 origin, Vector3 velocity, float time = 3f,
+                                          int steps = 24, Vector3 gravity = default)
+        {
+            if (time <= 0f) return;
+            if (steps < 2) steps = 2;
+            if (gravity == default) gravity = new Vector3(0f, -9.81f, 0f);
+
+            var prev = origin;
+            for (int i = 1; i <= steps; i++)
+            {
+                float t = time * i / steps;
+                var p = origin + velocity * t + gravity * (0.5f * t * t);
+                DrawLine(prev, p);
+                prev = p;
+            }
+        }
+
+        /// <summary>Кубическая кривая Безье по четырём точкам.</summary>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawBezier(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int segments = 24)
+        {
+            if (segments < 1) segments = 1;
+
+            var prev = a;
+            for (int i = 1; i <= segments; i++)
+            {
+                float t = (float)i / segments, u = 1f - t;
+                var p = u * u * u * a + 3f * u * u * t * b + 3f * u * t * t * c + t * t * t * d;
+                DrawLine(prev, p);
+                prev = p;
+            }
+        }
+
+        /// <summary>Плоская сетка в плоскости XZ повёрнутой системы.</summary>
+        /// <param name="cell">Размер ячейки.</param>
+        /// <param name="count">Число ячеек по X и по Z.</param>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawGrid(Vector3 center, Quaternion rotation, Vector2 cell, Vector2Int count)
+        {
+            if (cell.x <= 0f || cell.y <= 0f || count.x < 1 || count.y < 1) return;
+
+            float hx = cell.x * count.x * 0.5f;
+            float hz = cell.y * count.y * 0.5f;
+
+            for (int i = 0; i <= count.x; i++)
+            {
+                float x = -hx + i * cell.x;
+                DrawLine(center + rotation * new Vector3(x, 0f, -hz),
+                         center + rotation * new Vector3(x, 0f, hz));
+            }
+            for (int j = 0; j <= count.y; j++)
+            {
+                float z = -hz + j * cell.y;
+                DrawLine(center + rotation * new Vector3(-hx, 0f, z),
+                         center + rotation * new Vector3(hx, 0f, z));
+            }
+        }
+
+        // ================================================================= размеры
+
+        /// <summary>Двухсторонняя стрелка от точки к точке.</summary>
+        /// <param name="label">"" — подставить расстояние, null — без подписи.</param>
+        /// <param name="arrowSize">0 — подобрать от длины замера.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawMeasure(Vector3 a, Vector3 b, string label = "", float arrowSize = 0f)
         {
@@ -329,29 +395,20 @@ namespace RuntimeGizmos
             if (len < 1e-5f) { DrawPoint(a, 0.05f); return; }
             d /= len;
 
-            // Плоскость чертежа не задана — берём любую перпендикулярную ось.
+            // Плоскость не задана — любая перпендикулярная ось.
             var up = Mathf.Abs(d.y) < 0.9f ? Vector3.up : Vector3.right;
             var side = Vector3.Cross(d, up).normalized;
 
             MeasureLine(a, b, d, side, len, label, arrowSize, Vector3.zero);
         }
 
-        /// <summary>
-        /// Вынос размера, как на чертеже: от двух измеряемых точек уходят выносные линии
-        /// в заданном направлении, между их концами идёт размерная линия со стрелками
-        /// на обоих концах и подписью.
-        /// </summary>
-        /// <param name="a">Первая измеряемая точка.</param>
-        /// <param name="b">Вторая измеряемая точка.</param>
-        /// <param name="extensionDir">Куда отводить размер — направление выносных линий.</param>
-        /// <param name="extensionLength">Расстояние от измеряемых точек до размерной линии.</param>
-        /// <param name="label">Пустая строка — подставить расстояние, null — без подписи.</param>
-        /// <param name="gap">Отступ выносной линии от самой измеряемой точки.</param>
-        /// <param name="overshoot">
-        /// Насколько выносная линия выходит за размерную. Отрицательное — взять 12%
-        /// от длины выноса. На этот же отступ отодвигается подпись.
-        /// </param>
-        /// <param name="arrowSize">Длина стрелки в юнитах. 0 — подобрать от ширины замера.</param>
+        /// <summary>Чертёжный вынос: выносные линии, размерная со стрелками, подпись.</summary>
+        /// <param name="extensionDir">Направление выносных линий.</param>
+        /// <param name="extensionLength">От измеряемых точек до размерной линии.</param>
+        /// <param name="label">"" — подставить расстояние, null — без подписи.</param>
+        /// <param name="gap">Отступ выносной линии от точки.</param>
+        /// <param name="overshoot">Вылет за размерную линию. Меньше 0 — 12% от выноса.
+        /// На него же отодвигается подпись.</param>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawDimension(Vector3 a, Vector3 b, Vector3 extensionDir, float extensionLength,
                                          string label = "", float gap = 0f, float overshoot = -1f,
@@ -368,21 +425,16 @@ namespace RuntimeGizmos
 
             if (overshoot < 0f) overshoot = Mathf.Abs(extensionLength) * 0.12f;
 
-            // Выносные линии: от точки (с отступом) до чуть дальше размерной линии.
             DrawLine(a + e * gap, a + e * (extensionLength + overshoot));
             DrawLine(b + e * gap, b + e * (extensionLength + overshoot));
 
-            // Размерная линия. Стрелки лежат в плоскости чертежа — их «щёки»
-            // разводятся вдоль выносного направления, а не по случайной оси.
+            // Щёки стрелок разводятся вдоль выноса — чтобы лежали в плоскости чертежа.
             var da = a + e * extensionLength;
             var db = b + e * extensionLength;
             MeasureLine(da, db, d, e, len, label, arrowSize, -e * Mathf.Max(overshoot, len * 0.04f));
         }
 
-        /// <summary>
-        /// То же самое, но замер задан точкой, осью и шириной — когда ширина известна
-        /// заранее, а вторую точку считать не хочется.
-        /// </summary>
+        /// <summary>Замер точкой, осью и шириной.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawDimension(Vector3 from, Vector3 axis, float width,
                                          Vector3 extensionDir, float extensionLength,
@@ -393,7 +445,6 @@ namespace RuntimeGizmos
                           label, gap, overshoot);
         }
 
-        // Размерная линия со стрелками наружу на обоих концах и подписью посередине.
         static void MeasureLine(Vector3 a, Vector3 b, Vector3 dir, Vector3 side, float len,
                                 string label, float arrowSize, Vector3 labelOffset)
         {
@@ -408,7 +459,7 @@ namespace RuntimeGizmos
                      (a + b) * 0.5f + labelOffset, 13f);
         }
 
-        // Стрелка: остриё в tip, щёки уходят назад против outward и разводятся вдоль side.
+        // Остриё в tip, щёки назад против outward, разведены вдоль side.
         static void Barbs(Vector3 tip, Vector3 outward, Vector3 side, float size)
         {
             var back = tip - outward * size;
@@ -419,10 +470,7 @@ namespace RuntimeGizmos
 
         // ================================================================= попадание
 
-        /// <summary>
-        /// Точка попадания: крестик в точке и нормаль от неё. Для отладки рейкастов,
-        /// оверлапов, точек контакта.
-        /// </summary>
+        /// <summary>Крестик в плоскости поверхности, диск и стрелка нормали.</summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawHit(Vector3 point, Vector3 normal, float size = 0.15f)
         {

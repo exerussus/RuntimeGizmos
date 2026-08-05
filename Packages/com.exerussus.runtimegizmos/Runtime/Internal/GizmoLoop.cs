@@ -48,6 +48,7 @@ namespace RuntimeGizmos.Internal
             {
                 GizmoRenderer.Dispose();
                 GizmoSettings.ResetSession();
+                Registry.Clear();
             }
         }
 
@@ -55,6 +56,7 @@ namespace RuntimeGizmos.Internal
         {
             if (Application.isPlaying) return; // в плеймоде границу кадра держит PlayerLoop
 
+            Registry.Tick();
             bool hadData = GizmoRenderer.HasProducedData;
             GizmoRenderer.BeginFrame(strict: false);
 
@@ -72,6 +74,7 @@ namespace RuntimeGizmos.Internal
             // выставленные пользовательским кодом, уже не затрутся.
             GizmoRenderer.Dispose();
             GizmoSettings.ResetSession();
+            Registry.Clear();
 
             Install();
             Application.quitting -= Teardown;
@@ -115,7 +118,12 @@ namespace RuntimeGizmos.Internal
 
         static void OnBeginCameraRendering(ScriptableRenderContext ctx, Camera cam) => GizmoRenderer.Submit(cam);
 
-        static void PlayerLoopBeginFrame() => GizmoRenderer.BeginFrame(strict: true);
+        static void PlayerLoopBeginFrame()
+        {
+            // GizmoLazy рисует ДО обмена буферов, иначе опоздал бы на кадр.
+            Registry.Tick();
+            GizmoRenderer.BeginFrame(strict: true);
+        }
 
         static void InsertPlayerLoop()
         {

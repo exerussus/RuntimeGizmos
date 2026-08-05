@@ -55,6 +55,7 @@ Shader "Hidden/RuntimeGizmos/Unlit"
             {
                 float4 positionOS : POSITION;
                 half4  color      : COLOR;
+                float  dash       : TEXCOORD0;   // фаза пунктира, отрицательная — сплошная
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -62,6 +63,7 @@ Shader "Hidden/RuntimeGizmos/Unlit"
             {
                 float4 positionCS : SV_POSITION;
                 half4  color      : COLOR;
+                float  dash       : TEXCOORD0;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -77,12 +79,15 @@ Shader "Hidden/RuntimeGizmos/Unlit"
                 half4 c = IN.color;
                 c.rgb = GizmoDecodeColor(c.rgb);
                 OUT.color = c * _Color;
+                OUT.dash = IN.dash;
                 return OUT;
             }
 
             half4 frag (Varyings IN) : SV_Target
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(IN);
+                if (IN.dash >= 0.0 && frac(IN.dash) > 0.5) discard;
+
                 half4 c = IN.color;
                 c.a *= _Alpha;
                 return c;

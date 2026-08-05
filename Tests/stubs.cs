@@ -71,7 +71,7 @@ namespace Unity.Collections.LowLevel.Unsafe {
 }
 namespace UnityEngine {
   public struct Vector2 { public float x,y; public Vector2(float x,float y){this.x=x;this.y=y;}
-    public static Vector2 zero=>new Vector2(0,0); public float magnitude=>(float)Math.Sqrt(x*x+y*y);
+    public static Vector2 zero=>new Vector2(0,0); public static Vector2 one=>new Vector2(1,1); public float magnitude=>(float)Math.Sqrt(x*x+y*y);
     public static Vector2 operator*(Vector2 a,float b)=>new Vector2(a.x*b,a.y*b);
     public static Vector2 operator/(Vector2 a,float b)=>new Vector2(a.x/b,a.y/b);
     public static Vector2 operator+(Vector2 a,Vector2 b)=>new Vector2(a.x+b.x,a.y+b.y);
@@ -101,6 +101,7 @@ namespace UnityEngine {
     public static bool operator==(Vector3 a,Vector3 b)=>(a-b).sqrMagnitude<1e-10f; public static bool operator!=(Vector3 a,Vector3 b)=>!(a==b);
     public override bool Equals(object o)=>o is Vector3 v && this==v; public override int GetHashCode()=>0;
     public override string ToString()=>$"({x},{y},{z})"; }
+  public struct Vector2Int { public int x,y; public Vector2Int(int x,int y){this.x=x;this.y=y;} }
   public struct Vector4 { public float x,y,z,w; public Vector4(float x,float y,float z,float w){this.x=x;this.y=y;this.z=z;this.w=w;}
     public static implicit operator Vector4(Vector3 v)=>default; public static implicit operator Vector3(Vector4 v)=>default; }
   public struct Color { public float r,g,b,a; public Color(float r,float g,float b,float a=1){this.r=r;this.g=g;this.b=b;this.a=a;}
@@ -148,13 +149,27 @@ namespace UnityEngine {
     public static int CeilToInt(float v)=>(int)Math.Ceiling(v); public static int FloorToInt(float v)=>(int)Math.Floor(v);
     public static int NextPowerOfTwo(int v){ if(v<=0)return 0; v--; v|=v>>1; v|=v>>2; v|=v>>4; v|=v>>8; v|=v>>16; return v+1; }
     public static float Repeat(float a,float b)=>a-(float)Math.Floor(a/b)*b;
-    public static float Sign(float v)=>v<0?-1f:1f; }
+    public static float Sign(float v)=>v<0?-1f:1f;
+    public static float PingPong(float t,float l){ t=Repeat(t,l*2f); return l-Math.Abs(t-l); } }
   public static class Debug { public static void Log(object o){} public static void LogWarning(object o){} public static void LogError(object o){} }
+  // 64-битный идентификатор из Unity 6.5. Заглушка повторяет только то, на что
+  // опирается пакет: сравнение, хеш и получение у объекта.
+  public readonly struct EntityId : System.IEquatable<EntityId> {
+    readonly ulong _v;
+    public EntityId(ulong v) { _v = v; }
+    public bool IsValid() => _v != 0;
+    public static ulong ToULong(EntityId e) => e._v;
+    public bool Equals(EntityId o) => _v == o._v;
+    public override bool Equals(object o) => o is EntityId e && Equals(e);
+    public override int GetHashCode() => _v.GetHashCode();
+    public override string ToString() => _v.ToString();
+  }
   public class Object { public string name; public HideFlags hideFlags; internal bool _dead;
     public static void Destroy(Object o){ if(o!=null) o._dead=true; } public static void DestroyImmediate(Object o){ if(o!=null) o._dead=true; }
     static bool Nul(Object o)=>o is null || o._dead;
     static int _nextId = 1000; int _id;
     public int GetInstanceID(){ if(_id==0) _id=System.Threading.Interlocked.Increment(ref _nextId); return _id; }
+    public EntityId GetEntityId() => new EntityId((ulong)GetInstanceID());
     public static bool operator==(Object a,Object b){ bool x=Nul(a), y=Nul(b); if(x||y) return x&&y; return ReferenceEquals(a,b); }
     public static bool operator!=(Object a,Object b)=>!(a==b);
     public override bool Equals(object o)=>false; public override int GetHashCode()=>0; }
@@ -196,19 +211,19 @@ namespace UnityEngine {
     public int[] GetTriangles(int s, bool applyBase=true)=>null; public void GetTriangles(List<int> t,int s,bool applyBase=true){} public Rendering.IndexFormat indexFormat;
     public void SetIndices(int[] i,Rendering.MeshTopology t,int s,bool calc=true,int baseVertex=0){}
     public void SetIndices(System.Collections.Generic.List<int> i,Rendering.MeshTopology t,int s,bool calc=true,int baseVertex=0){} }
-  public class Transform : Object { public Vector3 position; public Quaternion rotation; public Matrix4x4 localToWorldMatrix; public Vector3 lossyScale;
+  public class Transform : Component { public Vector3 position; public Quaternion rotation; public Matrix4x4 localToWorldMatrix; public Vector3 lossyScale;
     public Vector3 localPosition, localScale, forward; public void SetParent(Transform p,bool w){}
     public T[] GetComponentsInChildren<T>() where T : Component => new T[0];
     public void GetComponentsInChildren<T>(List<T> r) where T : Component {}
     public int childCount => 0; public Transform GetChild(int i) => null;
     public Vector3 TransformPoint(Vector3 p) => p; public Vector3 TransformDirection(Vector3 p) => p;
     public Transform parent; public Vector3 up, right; }
-  public class Component : Object { public Transform transform; }
+  public class Component : Object { public Transform transform; public GameObject gameObject; }
   public class Behaviour : Component { public bool enabled = true; }
   public class Rigidbody : Component { public Vector3 position, linearVelocity, velocity, angularVelocity, worldCenterOfMass; }
   public struct RaycastHit { public Vector3 point, normal; public float distance; public Collider collider; }
   public class Renderer : Component { public bool enabled = true; public Bounds bounds; }
-  public class MonoBehaviour : Behaviour { public GameObject gameObject; }
+  public class MonoBehaviour : Behaviour { }
   public class Camera : Behaviour { public CameraType cameraType; public float fieldOfView, aspect, nearClipPlane, farClipPlane, orthographicSize;
     public bool orthographic; public int cullingMask; public static Camera main=>null; }
   public enum CameraType { Game=1, SceneView=2, Preview=4, VR=8, Reflection=16 }

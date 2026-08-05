@@ -11,6 +11,9 @@ namespace RuntimeGizmos
     /// <summary>Выравнивание текстовой метки относительно якоря.</summary>
     public enum GizmoTextAlign { Left, Center, Right }
 
+    /// <summary>Угол экрана для DrawScreenText.</summary>
+    public enum GizmoCorner { TopLeft, TopRight, BottomLeft, BottomRight }
+
     /// <summary>
     /// Полная замена UnityEngine.Gizmos, работающая и в билде, и в редакторе,
     /// и видимая через игровую камеру, а не только в Scene View.
@@ -26,9 +29,9 @@ namespace RuntimeGizmos
     /// </summary>
     public static unsafe partial class Gizmo
     {
-        const string EDITOR = "UNITY_EDITOR";
-        const string DEV = "DEVELOPMENT_BUILD";
-        const string ALWAYS = "RUNTIME_GIZMOS_ALWAYS";
+        internal const string EDITOR = "UNITY_EDITOR";
+        internal const string DEV = "DEVELOPMENT_BUILD";
+        internal const string ALWAYS = "RUNTIME_GIZMOS_ALWAYS";
 
         static Color s_Color = Color.white;
         static Matrix4x4 s_Matrix = Matrix4x4.identity;
@@ -87,13 +90,29 @@ namespace RuntimeGizmos
             set => GizmoRenderer.Duration = value;
         }
 
-        public static void Reset()
+        /// <summary>
+        /// Период пунктира в мировых единицах: штрих и такой же пропуск. 0 — сплошная.
+        /// Фаза накапливается вдоль ломаной, поэтому у путей штрихи не рвутся на изломах.
+        /// </summary>
+        public static float dash
+        {
+            get => GizmoRenderer.Dash;
+            set { GizmoRenderer.Dash = value; GizmoRenderer.DashRun = 0f; }
+        }
+
+        public static void Reset() => ResetState();
+
+        // То же самое без [Conditional]: нужно слою GizmoLazy, который обязан
+        // компилироваться и в релизе, даже если фактически там не исполняется.
+        internal static void ResetState()
         {
             color = Color.white;
             matrix = Matrix4x4.identity;
             lineWidth = GizmoSettings.DefaultLineWidth;
             depthTest = true;
             duration = 0f;
+            GizmoRenderer.Dash = 0f;
+            GizmoRenderer.DashRun = 0f;
         }
 
         // ================================================================= scope
@@ -192,14 +211,14 @@ namespace RuntimeGizmos
         /// </summary>
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawTextWorld(string text, Vector3 position, float worldHeight = 0.25f)
-            => GizmoRenderer.Text(text, Xf(position), worldHeight, Vector2.zero, 0.5f, true);
+            => GizmoRenderer.Text(text, Xf(position), worldHeight, Vector2.zero, 0.5f, 1);
 
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawTextWorld(string text, Vector3 position, Color c, float worldHeight = 0.25f)
         {
             var prev = s_Color;
             color = c;
-            GizmoRenderer.Text(text, Xf(position), worldHeight, Vector2.zero, 0.5f, true);
+            GizmoRenderer.Text(text, Xf(position), worldHeight, Vector2.zero, 0.5f, 1);
             color = prev;
         }
 
@@ -207,7 +226,34 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawTextWorld(string text, Vector3 position, float worldHeight,
                                          Vector2 worldOffset, GizmoTextAlign align = GizmoTextAlign.Center)
-            => GizmoRenderer.Text(text, Xf(position), worldHeight, worldOffset, AlignFactor(align), true);
+            => GizmoRenderer.Text(text, Xf(position), worldHeight, worldOffset, AlignFactor(align), 1);
+
+        /// <summary>
+        /// Текст в пикселях экрана, начало координат в левом верхнем углу. Для HUD:
+        /// счётчиков, дампов состояния. Мировая матрица и глубина не применяются.
+        /// </summary>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawScreenText(string text, Vector2 screenPos, float sizePixels = 14f,
+                                          GizmoTextAlign align = GizmoTextAlign.Left)
+            => GizmoRenderer.Text(text, screenPos, sizePixels, Vector2.zero, AlignFactor(align), 2);
+
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawScreenText(string text, Vector2 screenPos, Color c,
+                                          float sizePixels = 14f, GizmoTextAlign align = GizmoTextAlign.Left)
+        {
+            var prev = s_Color;
+            color = c;
+            GizmoRenderer.Text(text, screenPos, sizePixels, Vector2.zero, AlignFactor(align), 2);
+            color = prev;
+        }
+
+        /// <summary>
+        /// Текст, прижатый к углу экрана. Строки в одном углу за кадр укладываются
+        /// стопкой автоматически — счётчик сбрасывается на границе кадра.
+        /// </summary>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawScreenText(string text, GizmoCorner corner, float sizePixels = 14f)
+            => GizmoRenderer.CornerText(text, corner, sizePixels);
 
         static float AlignFactor(GizmoTextAlign a) =>
             a == GizmoTextAlign.Left ? 0f : a == GizmoTextAlign.Right ? 1f : 0.5f;

@@ -5,21 +5,14 @@ using UnityEngine;
 namespace RuntimeGizmos.Internal
 {
     /// <summary>
-    /// Штриховой шрифт для текстовых меток: каждый глиф — набор отрезков на сетке
-    /// x 0..4, y 0..9 (базовая линия y=2, высота строчной y=6, высота прописной y=8,
-    /// выносной элемент вниз до y=0, диакритика вверх до y=9).
+    /// Штриховой шрифт: глиф — набор отрезков на сетке x 0..4, y 0..9. Базовая линия y=2,
+    /// высота строчной y=6, прописной y=8, выносной элемент до y=0, диакритика до y=9.
     ///
-    /// Покрытие: ASCII 32..126, кириллица А..я, Ё и ё. Всё, что не покрыто, рисуется
-    /// пустым прямоугольником — молча пропадать символ не должен, иначе отладочная
-    /// подпись врёт о том, что в ней написано.
+    /// Покрытие: ASCII 32..126, кириллица А..я, Ё и ё. Непокрытый символ рисуется пустым
+    /// прямоугольником: молча пропадать он не должен, иначе подпись врёт о своём содержимом.
     ///
-    /// Почему свой шрифт, а не системный: Font.GetDefault и OS-шрифты недоступны или
-    /// ведут себя по-разному на WebGL и консолях, а динамический атлас требует
-    /// перестроений и обработки Font.textureRebuilt. Отрезки же одинаково работают
-    /// везде и ложатся в тот же канал, что и обычные линии.
-    ///
-    /// Таблица разбирается один раз в нативный буфер; managed-строки после этого
-    /// не трогаются.
+    /// Свой, а не системный, потому что OS-шрифты недоступны на WebGL и консолях, а
+    /// динамический атлас требует обработки Font.textureRebuilt.
     /// </summary>
     internal static class GizmoFont
     {
@@ -49,6 +42,9 @@ namespace RuntimeGizmos.Internal
 
         /// <summary>Базовая линия в единицах сетки от низа.</summary>
         public const float Baseline = 2f;
+
+        /// <summary>Шаг между строками в единицах сетки.</summary>
+        public const float LineStep = 10f;
 
         /// <summary>Отрезки всех глифов подряд: (x0, y0, x1, y1) в единицах сетки.</summary>
         public static NativeArray<Vector4> Segments;
@@ -273,8 +269,7 @@ namespace RuntimeGizmos.Internal
                 float x = s[i] - '0';
                 float y = s[i + 1] - '0';
 
-                // Точки («.», «i», «Ё») закодированы как отрезок нулевой длины —
-                // разворот в квад дал бы ноль площади, поэтому растягиваем их.
+                // Точки закодированы отрезком нулевой длины: квад из него был бы пустым.
                 if (run > 0)
                     Segments[w++] = (px == x && py == y)
                         ? Dot(x, y)
@@ -290,10 +285,7 @@ namespace RuntimeGizmos.Internal
 
         static Vector4 Dot(float x, float y) => new Vector4(x, y, x + 0.34f, y);
 
-        /// <summary>
-        /// Символ в слот таблицы. Неизвестный видимый символ уходит в заглушку,
-        /// управляющие символы — в пустоту (перо всё равно сдвинется, колонки не поедут).
-        /// </summary>
+        /// <summary>Неизвестный видимый символ — в заглушку, управляющий — в пустоту.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static int Slot(char c)
         {
@@ -315,8 +307,39 @@ namespace RuntimeGizmos.Internal
             return count > 0;
         }
 
-        /// <summary>Ширина строки в единицах сетки.</summary>
-        public static float Width(string text) => text == null ? 0f : text.Length * Advance - 1.5f;
+        /// <summary>Ширина строки из count символов, в единицах сетки.</summary>
+        public static float LineWidth(int count) => count <= 0 ? 0f : count * Advance - 1.5f;
+
+        /// <summary>Ширина текста в единицах сетки. Многострочный — по самой длинной строке.</summary>
+        public static float Width(string text)
+        {
+            Measure(text, out _, out float w);
+            return w;
+        }
+
+        /// <summary>Число строк и ширина самой длинной, в единицах сетки.</summary>
+        public static void Measure(string text, out int lines, out float maxWidth)
+        {
+            lines = 0; maxWidth = 0f;
+            if (string.IsNullOrEmpty(text)) return;
+
+            int start = 0;
+            while (true)
+            {
+                int end = text.IndexOf('\n', start);
+                int stop = end < 0 ? text.Length : end;
+
+                int len = stop - start;
+                if (len > 0 && text[stop - 1] == '\r') len--;   // CRLF
+
+                lines++;
+                float w = LineWidth(len);
+                if (w > maxWidth) maxWidth = w;
+
+                if (end < 0) return;
+                start = end + 1;
+            }
+        }
 
         public static void Dispose()
         {

@@ -502,13 +502,13 @@ public static class Tests
             int st(Type t) => (int)typeof(System.Runtime.CompilerServices.Unsafe)
                 .GetMethod("SizeOf").MakeGenericMethod(t).Invoke(null, null);
 
-            Check("J1 Thin: 16 байт", Sum(GizmoVertexLayouts.Thin) == st(typeof(GizmoVertex)) && Sum(GizmoVertexLayouts.Thin) == 16,
+            Check("J1 Thin: 20 байт", Sum(GizmoVertexLayouts.Thin) == st(typeof(GizmoVertex)) && Sum(GizmoVertexLayouts.Thin) == 20,
                   "layout=" + Sum(GizmoVertexLayouts.Thin) + " struct=" + st(typeof(GizmoVertex)));
-            Check("J2 Wide: 36 байт", Sum(GizmoVertexLayouts.Wide) == st(typeof(GizmoWideVertex)) && Sum(GizmoVertexLayouts.Wide) == 36,
+            Check("J2 Wide: 40 байт", Sum(GizmoVertexLayouts.Wide) == st(typeof(GizmoWideVertex)) && Sum(GizmoVertexLayouts.Wide) == 40,
                   "layout=" + Sum(GizmoVertexLayouts.Wide) + " struct=" + st(typeof(GizmoWideVertex)));
             Check("J3 Quad: 40 байт", Sum(GizmoVertexLayouts.Quad) == st(typeof(GizmoQuadVertex)) && Sum(GizmoVertexLayouts.Quad) == 40,
                   "layout=" + Sum(GizmoVertexLayouts.Quad) + " struct=" + st(typeof(GizmoQuadVertex)));
-            Check("J4 Text: 40 байт", Sum(GizmoVertexLayouts.Text) == st(typeof(GizmoTextVertex)) && Sum(GizmoVertexLayouts.Text) == 40,
+            Check("J4 Text: 44 байта", Sum(GizmoVertexLayouts.Text) == st(typeof(GizmoTextVertex)) && Sum(GizmoVertexLayouts.Text) == 44,
                   "layout=" + Sum(GizmoVertexLayouts.Text) + " struct=" + st(typeof(GizmoTextVertex)));
 
             // Position обязан лежать по смещению 0 — компактор retained читает *(Vector3*)ptr
@@ -662,7 +662,7 @@ public static class Tests
 
             // мёртвые текстуры вычищаются
             Boot(); GizmoRenderer.Ensure();
-            var icons = Priv<Dictionary<int, GizmoTexturedBatch>>(typeof(GizmoRenderer), "_icons");
+            var icons = Priv<Dictionary<GizmoObjectId, GizmoTexturedBatch>>(typeof(GizmoRenderer), "_icons");
             var t1 = new Texture2D { name = "t1" };
             var t2 = new Texture2D { name = "t2" };
             Gizmo.DrawIcon(Vector3.zero, t1);
@@ -904,24 +904,30 @@ public static class Tests
             float MinW(GizmoChannel<GizmoTextVertex> c)
             {
                 var b = c.Target(false); float m = float.MaxValue;
-                unsafe { for (int i = 0; i < b.Count; i++) m = Math.Min(m, b.Ptr[i].SideWidth.y); }
+                unsafe { for (int i = 0; i < b.Count; i++) m = Math.Min(m, b.Ptr[i].Params.y); }
+                return m;
+            }
+            float MaxMode(GizmoChannel<GizmoTextVertex> c)
+            {
+                var b = c.Target(false); float m = 0f;
+                unsafe { for (int i = 0; i < b.Count; i++) m = Math.Max(m, b.Ptr[i].Params.z); }
                 return m;
             }
             float MaxW(GizmoChannel<GizmoTextVertex> c)
             {
                 var b = c.Target(false); float m = float.MinValue;
-                unsafe { for (int i = 0; i < b.Count; i++) m = Math.Max(m, b.Ptr[i].SideWidth.y); }
+                unsafe { for (int i = 0; i < b.Count; i++) m = Math.Max(m, b.Ptr[i].Params.y); }
                 return m;
             }
 
             ch[0].Clear();
             Gizmo.DrawText("Ab", Vector3.zero, 14f);
             int pxVerts = ch[0].Target(false).Count;
-            Check("R1 пиксельный режим — толщина положительная", MinW(ch[0]) > 0f, "" + MinW(ch[0]));
+            Check("R1 пиксельный режим", MaxMode(ch[0]) == 0f && MinW(ch[0]) > 0f, "режим " + MaxMode(ch[0]));
 
             ch[0].Clear();
             Gizmo.DrawTextWorld("Ab", Vector3.zero, 0.5f);
-            Check("R2 мировой режим помечен минусом", MaxW(ch[0]) < 0f, "" + MaxW(ch[0]));
+            Check("R2 мировой режим помечен полем", MaxMode(ch[0]) == 1f, "режим " + MaxMode(ch[0]));
             Check("R3 геометрия та же, режим меняет только знак", ch[0].Target(false).Count == pxVerts,
                   ch[0].Target(false).Count + " против " + pxVerts);
 
@@ -1287,6 +1293,327 @@ public static class Tests
             Gizmo.Reset();
         }
 
+        // ==================================================== W. GizmoLazy
+        Group("W. Ленивая отладка (GizmoLazy)");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            GizmoLazy.Clear();
+            var thin = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            int Verts() => thin[0].Target(false).Count;
+
+            Transform T(string n) { var t = new Transform { name = n }; t.lossyScale = Vector3.one; return t; }
+            var enemy = T("enemy");
+
+            GizmoLazy.Track(enemy).Volume(Color.red);
+            Check("W1 регистрация добавилась", GizmoLazy.Count == 1, "" + GizmoLazy.Count);
+
+            thin[0].Clear(); Registry.Tick();
+            Check("W2 тик рисует", Verts() > 0, "" + Verts());
+            thin[0].Clear(); Registry.Tick();
+            Check("W3 и рисует снова следующим кадром", Verts() > 0);
+
+            // повтор с той же строки заменяет
+            int b4 = GizmoLazy.Count;
+            for (int i = 0; i < 50; i++) GizmoLazy.Track(enemy).Volume(Color.red);
+            Check("W4 пятьдесят вызовов с одной строки — одна запись",
+                  GizmoLazy.Count - b4 == 1, "прибавилось " + (GizmoLazy.Count - b4));
+
+            // разные команды с одной строки не затирают друг друга
+            GizmoLazy.Clear();
+            GizmoLazy.Track(enemy).Volume(); GizmoLazy.Track(enemy).Axes(); GizmoLazy.Track(enemy).Forward();
+            Check("W5 разные команды сосуществуют", GizmoLazy.Count == 3, "" + GizmoLazy.Count);
+
+            // смерть цели снимает
+            GizmoLazy.Clear();
+            var doomed = T("doomed");
+            GizmoLazy.Track(doomed).Volume();
+            UnityEngine.Object.DestroyImmediate(doomed);
+            thin[0].Clear(); Registry.Tick();
+            Check("W6 смерть цели снимает регистрацию", GizmoLazy.Count == 0 && Verts() == 0);
+
+            // время
+            GizmoLazy.Clear();
+            Time.realtimeSinceStartup = 2000f;
+            GizmoLazy.Track(enemy).For(0.5f).Volume();
+            thin[0].Clear(); Registry.Tick();
+            Check("W7 срочная регистрация рисует", Verts() > 0);
+            Time.realtimeSinceStartup = 2000.6f;
+            thin[0].Clear(); Registry.Tick();
+            Check("W8 после срока снимается", GizmoLazy.Count == 0 && Verts() == 0);
+
+            // ключ
+            GizmoLazy.Clear();
+            var a1 = T("a"); var a2 = T("b");
+            foreach (var t in new[] { a1, a2 }) GizmoLazy.Track(t).Key(t.name).Volume();
+            Check("W9 явный ключ разводит цели в цикле", GizmoLazy.Count == 2, "" + GizmoLazy.Count);
+            GizmoLazy.Untrack(a1, "a");
+            Check("W10 снятие по ключу", GizmoLazy.Count == 1);
+            GizmoLazy.Untrack(a2);
+            Check("W11 снятие по цели", GizmoLazy.Count == 0);
+
+            // исключение изолируется
+            GizmoLazy.Clear();
+            GizmoLazy.Track(enemy).Key("bad").Draw(() => throw new InvalidOperationException("тест"));
+            GizmoLazy.Track(enemy).Key("good").Draw(() => Gizmo.DrawLine(Vector3.zero, Vector3.one));
+            thin[0].Clear();
+            Throws("W12 исключение не роняет тик", () => Registry.Tick(), false);
+            Check("W13 виновник снят, сосед жив", GizmoLazy.Count == 1, "" + GizmoLazy.Count);
+            Check("W14 сосед всё ещё рисует", Verts() == 2, "" + Verts());
+
+            // состояние не протекает
+            GizmoLazy.Clear();
+            GizmoLazy.Track(enemy).Key("s1").Draw(() => { Gizmo.color = Color.red; Gizmo.lineWidth = 9f; });
+            GizmoLazy.Track(enemy).Key("s2").Draw(() => Gizmo.DrawLine(Vector3.zero, Vector3.one));
+            thin[0].Clear(); Registry.Tick();
+            Check("W15 состояние не протекает между записями", Verts() == 2,
+                  "толщина 9 увела бы в канал квадов, вершин=" + Verts());
+
+            // потолок
+            GizmoLazy.Clear();
+            GizmoLazy.MaxTracked = 8;
+            for (int i = 0; i < 100; i++) GizmoLazy.Track(T("g" + i)).Key("k" + i).Volume();
+            Check("W16 потолок соблюдается", GizmoLazy.Count == 8, "" + GizmoLazy.Count);
+            GizmoLazy.MaxTracked = 256;
+
+            // выключатели
+            GizmoLazy.Clear();
+            GizmoLazy.Track(enemy).Volume();
+            GizmoLazy.Enabled = false;
+            thin[0].Clear(); Registry.Tick();
+            Check("W17 GizmoLazy.Enabled=false глушит слой", Verts() == 0);
+            GizmoLazy.Enabled = true;
+            GizmoRenderer.Enabled = false;
+            thin[0].Clear(); Registry.Tick();
+            Check("W18 Gizmo.enabled=false тоже глушит", Verts() == 0);
+            GizmoRenderer.Enabled = true;
+
+            // физика
+            GizmoLazy.Clear();
+            var box = new BoxCollider { size = Vector3.one }; box.transform = T("box");
+            var rb = new Rigidbody { linearVelocity = Vector3.up * 3f }; rb.transform = T("rb");
+            GizmoLazy.Track(box).Shape(Color.green);
+            GizmoLazy.Track(rb).Velocity(Color.cyan);
+            thin[0].Clear();
+            Throws("W19 команды физики не роняют", () => Registry.Tick(), false);
+            Check("W20 и что-то рисуют", Verts() > 0, "" + Verts());
+
+            // все команды разом
+            GizmoLazy.Clear();
+            Throws("W21 все команды подряд", () =>
+            {
+                var t = T("all"); var o = T("other");
+                GizmoLazy.Track(t).Volume();
+                GizmoLazy.Track(t).Bounds();
+                GizmoLazy.Track(t).Label("подпись");
+                GizmoLazy.Track(t).Label("мировая", Color.red, 0.3f);
+                GizmoLazy.Track(t).LinkTo(o);
+                GizmoLazy.Track(t).Axes(2f);
+                GizmoLazy.Track(t).Forward(3f);
+                GizmoLazy.Track(t).Range(5f);
+                GizmoLazy.Track(t).Range(5f, Color.red, 2f);
+                GizmoLazy.Track(t).FieldOfView(70f, 8f);
+                GizmoLazy.Track(t).Hierarchy();
+                GizmoLazy.Track(t).For(1f).Key("k").Volume();
+                Registry.Tick();
+            }, false);
+            Check("W22 все команды зарегистрировались", GizmoLazy.Count == 12, "" + GizmoLazy.Count);
+
+            // краевые случаи
+            GizmoLazy.Clear();
+            Throws("W23 краевые случаи", () =>
+            {
+                GizmoLazy.Track((Transform)null).Volume();
+                GizmoLazy.Track((GameObject)null).Volume();
+                GizmoLazy.Track((Component)null).Shape();
+                GizmoLazy.Track(enemy).Draw(null);
+                GizmoLazy.Track(enemy).LinkTo(null);
+                GizmoLazy.Track(enemy).For(-5f).Volume();
+                GizmoLazy.Untrack(null);
+                GizmoLazy.Untrack(null, "x");
+                Registry.Tick();
+            }, false);
+            Check("W24 null-цели не регистрируются", GizmoLazy.Count <= 3, "" + GizmoLazy.Count);
+
+            GizmoLazy.Clear();
+            Check("W25 Clear снимает всё", GizmoLazy.Count == 0);
+            Gizmo.Reset();
+        }
+
+        // ==================================================== X. новое в 1.2
+        Group("X. Многострочность, пунктир, полоса, экран, кривые");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            var thin = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            var wide = Priv<GizmoChannel<GizmoWideVertex>[]>(typeof(GizmoRenderer), "_wide");
+            var txt = Priv<GizmoChannel<GizmoTextVertex>[]>(typeof(GizmoRenderer), "_text");
+            int TV() => txt[0].Target(false).Count;
+
+            // --- многострочность
+            GizmoFont.Ensure();
+            GizmoFont.Measure("ab", out int l1, out float w1);
+            GizmoFont.Measure("ab\ncde", out int l2, out float w2);
+            GizmoFont.Measure("ab\r\ncde", out int l3, out float w3);
+            Check("X1 одна строка", l1 == 1);
+            Check("X2 две строки", l2 == 2 && l3 == 2);
+            Check("X3 ширина по самой длинной", w2 > w1 && Math.Abs(w2 - w3) < 1e-4f,
+                  w1 + " / " + w2 + " / " + w3);
+
+            txt[0].Clear(); Gizmo.DrawText("ab", Vector3.zero, 14f); int one = TV();
+            txt[0].Clear(); Gizmo.DrawText("ab\nab", Vector3.zero, 14f); int two = TV();
+            Check("X4 перенос строки удваивает геометрию", two == one * 2, one + " → " + two);
+
+            txt[0].Clear(); Gizmo.DrawText("ab\r\nab", Vector3.zero, 14f);
+            Check("X5 CRLF не рисует лишнего", TV() == two, TV() + " против " + two);
+
+            float MinY(GizmoChannel<GizmoTextVertex> c)
+            { var b=c.Target(false); float m=float.MaxValue; unsafe{for(int i=0;i<b.Count;i++) m=Math.Min(m,b.Ptr[i].Offset.y);} return m; }
+            float MaxY(GizmoChannel<GizmoTextVertex> c)
+            { var b=c.Target(false); float m=float.MinValue; unsafe{for(int i=0;i<b.Count;i++) m=Math.Max(m,b.Ptr[i].Offset.y);} return m; }
+            txt[0].Clear(); Gizmo.DrawText("ab\nab", Vector3.zero, 14f);
+            Check("X6 строки разнесены по вертикали", MaxY(txt[0]) - MinY(txt[0]) > 14f,
+                  "разброс " + (MaxY(txt[0]) - MinY(txt[0])));
+
+            // --- пунктир
+            float MinDash(GizmoChannel<GizmoVertex> c)
+            { var b=c.Target(false); float m=float.MaxValue; unsafe{for(int i=0;i<b.Count;i++) m=Math.Min(m,b.Ptr[i].Dash);} return m; }
+            float MaxDash(GizmoChannel<GizmoVertex> c)
+            { var b=c.Target(false); float m=float.MinValue; unsafe{for(int i=0;i<b.Count;i++) m=Math.Max(m,b.Ptr[i].Dash);} return m; }
+
+            thin[0].Clear(); Gizmo.dash = 0f; Gizmo.DrawLine(Vector3.zero, Vector3.one * 10f);
+            Check("X7 сплошная помечена -1", MaxDash(thin[0]) < 0f, "" + MaxDash(thin[0]));
+
+            thin[0].Clear(); Gizmo.dash = 0.5f; Gizmo.DrawLine(Vector3.zero, new Vector3(4f, 0f, 0f));
+            Check("X8 пунктир даёт растущую фазу", MinDash(thin[0]) >= 0f && MaxDash(thin[0]) > 7f,
+                  MinDash(thin[0]) + ".." + MaxDash(thin[0]));
+
+            thin[0].Clear(); Gizmo.DrawLine(Vector3.zero, new Vector3(4f, 0f, 0f));
+            Check("X9 фаза продолжается между вызовами", MinDash(thin[0]) > 7f, "" + MinDash(thin[0]));
+
+            var tri = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_tri");
+            tri[0].Clear(); Gizmo.DrawCube(Vector3.zero, Vector3.one);
+            Check("X10 у заливки пунктира нет и мусора тоже", MaxDash(tri[0]) < 0f, "" + MaxDash(tri[0]));
+
+            thin[0].Clear(); Gizmo.DrawWireSphere(Vector3.zero, 1f);
+            Check("X11 пунктир доезжает до пакетных примитивов", MinDash(thin[0]) >= 0f);
+
+            Gizmo.lineWidth = 4f; wide[0].Clear();
+            Gizmo.DrawLine(Vector3.zero, new Vector3(4f, 0f, 0f));
+            float wd; unsafe { wd = wide[0].Target(false).Ptr[0].Params.z; }
+            Check("X12 толстые линии тоже пунктирные", wd >= 0f, "" + wd);
+            Gizmo.Reset();
+
+            thin[0].Clear(); Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Check("X13 Reset возвращает сплошную", MaxDash(thin[0]) < 0f);
+
+            // --- полоса
+            txt[0].Clear(); Gizmo.DrawBar(Vector3.zero, 0.5f);
+            Check("X14 полоса — фон плюс заливка", TV() == 12, "" + TV());
+            txt[0].Clear(); Gizmo.DrawBar(Vector3.zero, 0f);
+            Check("X15 пустая полоса — только фон", TV() == 6, "" + TV());
+            txt[0].Clear(); Gizmo.DrawBar(Vector3.zero, 5f);
+            Check("X16 заполнение зажимается", TV() == 12, "" + TV());
+            Throws("X17 краевые случаи полосы", () =>
+            {
+                Gizmo.DrawBar(Vector3.zero, float.NaN);
+                Gizmo.DrawBar(Vector3.zero, 0.5f, 0f, 0f);
+                Gizmo.DrawBar(Vector3.zero, 0.5f, -10f, -1f);
+                Gizmo.DrawBar(Vector3.zero, 0.5f, Color.red, Color.gray, 60f, 8f, 20f);
+                Gizmo.DrawBarWorld(Vector3.zero, 0.7f);
+                Gizmo.DrawBarWorld(Vector3.zero, 0.7f, 0f, 0f);
+            }, false);
+
+            // --- экранный текст
+            txt[0].Clear(); Gizmo.DrawScreenText("hud", new Vector2(10f, 10f));
+            float mode; unsafe { mode = txt[0].Target(false).Ptr[0].Params.z; }
+            Check("X18 экранный текст помечен режимом 2", Math.Abs(mode - 2f) < 1e-5f, "" + mode);
+
+            txt[0].Clear();
+            GizmoRenderer.ResetCorners();
+            Gizmo.DrawScreenText("одна", GizmoCorner.TopLeft);
+            float y1; unsafe { y1 = txt[0].Target(false).Ptr[0].Position.y; }
+            int after1 = TV();
+            Gizmo.DrawScreenText("две", GizmoCorner.TopLeft);
+            float y2; unsafe { y2 = txt[0].Target(false).Ptr[after1].Position.y; }
+            Check("X19 угловой текст укладывается стопкой", y2 > y1, y1 + " → " + y2);
+
+            GizmoRenderer.ResetCorners();
+            txt[0].Clear(); Gizmo.DrawScreenText("снова", GizmoCorner.TopLeft);
+            float y3; unsafe { y3 = txt[0].Target(false).Ptr[0].Position.y; }
+            Check("X20 счётчик углов сбрасывается на кадре", Math.Abs(y3 - y1) < 1e-4f, y1 + " / " + y3);
+
+            Throws("X21 все четыре угла", () =>
+            {
+                foreach (GizmoCorner c in System.Enum.GetValues(typeof(GizmoCorner)))
+                    Gizmo.DrawScreenText("угол\nдве строки", c);
+            }, false);
+
+            // --- кривые и сетка
+            thin[0].Clear(); Gizmo.DrawTrajectory(Vector3.zero, Vector3.up * 5f, 2f, 10);
+            Check("X22 траектория даёт 10 сегментов", thin[0].Target(false).Count == 20,
+                  "" + thin[0].Target(false).Count);
+            thin[0].Clear(); Gizmo.DrawBezier(Vector3.zero, Vector3.up, Vector3.right, Vector3.one, 8);
+            Check("X23 безье даёт 8 сегментов", thin[0].Target(false).Count == 16,
+                  "" + thin[0].Target(false).Count);
+            thin[0].Clear();
+            Gizmo.DrawGrid(Vector3.zero, Quaternion.identity, new Vector2(1f, 1f), new Vector2Int(2, 3));
+            Check("X24 сетка 2×3 даёт 3+4 линии", thin[0].Target(false).Count == (3 + 4) * 2,
+                  "" + thin[0].Target(false).Count);
+
+            Throws("X25 краевые случаи кривых и сетки", () =>
+            {
+                Gizmo.DrawTrajectory(Vector3.zero, Vector3.zero, 0f, 0);
+                Gizmo.DrawTrajectory(Vector3.zero, Vector3.up, -1f, -5);
+                Gizmo.DrawBezier(Vector3.zero, Vector3.zero, Vector3.zero, Vector3.zero, 0);
+                Gizmo.DrawBezier(Vector3.zero, Vector3.one, Vector3.one, Vector3.zero, -3);
+                Gizmo.DrawGrid(Vector3.zero, Quaternion.identity, Vector2.zero, new Vector2Int(2, 2));
+                Gizmo.DrawGrid(Vector3.zero, Quaternion.identity, Vector2.one, new Vector2Int(0, 0));
+                Gizmo.DrawGrid(Vector3.zero, Quaternion.identity, new Vector2(-1f, -1f), new Vector2Int(-2, -2));
+                GizmoRenderer.BeginFrame(true);
+            }, false);
+
+            Gizmo.Reset();
+        }
+
+        // ==================================================== Y. идентичность объектов
+        Group("Y. Идентичность объектов");
+        {
+            var a = new GameObject("a");
+            var b = new GameObject("b");
+
+            Check("Y1 разные объекты — разные идентичности",
+                  GizmoObjectId.Of(a) != GizmoObjectId.Of(b));
+            Check("Y2 один объект — одна идентичность",
+                  GizmoObjectId.Of(a) == GizmoObjectId.Of(a));
+            Check("Y3 null даёт значение по умолчанию",
+                  GizmoObjectId.Of(null) == default(GizmoObjectId));
+            Check("Y4 живой объект не равен null-идентичности",
+                  GizmoObjectId.Of(a) != default(GizmoObjectId));
+            Check("Y5 хеш стабилен",
+                  GizmoObjectId.Of(a).GetHashCode() == GizmoObjectId.Of(a).GetHashCode());
+
+            // как ключ словаря
+            var map = new Dictionary<GizmoObjectId, string>();
+            map[GizmoObjectId.Of(a)] = "a";
+            map[GizmoObjectId.Of(b)] = "b";
+            Check("Y6 работает ключом словаря",
+                  map.Count == 2 && map[GizmoObjectId.Of(a)] == "a" && map[GizmoObjectId.Of(b)] == "b");
+
+            var m1 = new Mesh { name = "m1", subMeshCount = 3 };
+            var m2 = new Mesh { name = "m2", subMeshCount = 3 };
+            Check("Y7 ключ меша различает сабмеши",
+                  !new GizmoMeshKey(m1, 0).Equals(new GizmoMeshKey(m1, 1)));
+            Check("Y8 ключ меша различает меши",
+                  !new GizmoMeshKey(m1, 0).Equals(new GizmoMeshKey(m2, 0)));
+            Check("Y9 одинаковые ключи равны",
+                  new GizmoMeshKey(m1, 2).Equals(new GizmoMeshKey(m1, 2)));
+
+            var mkeys = new Dictionary<GizmoMeshKey, int>();
+            mkeys[new GizmoMeshKey(m1, 0)] = 1;
+            mkeys[new GizmoMeshKey(m1, 1)] = 2;
+            mkeys[new GizmoMeshKey(m2, 0)] = 3;
+            Check("Y10 ключ меша работает в словаре", mkeys.Count == 3, "" + mkeys.Count);
+        }
+
         Console.WriteLine("\n═══════════════════════════════════");
         Console.WriteLine($"  прошло {_pass}, упало {_fail}");
         Console.WriteLine("═══════════════════════════════════");
@@ -1306,7 +1633,7 @@ public static class Tests
     {
         var b = ch.Target(false);
         float m = float.MaxValue;
-        unsafe { for (int i = 0; i < b.Count; i++) m = Math.Min(m, b.Ptr[i].SideWidth.y); }
+        unsafe { for (int i = 0; i < b.Count; i++) m = Math.Min(m, b.Ptr[i].Params.y); }
         return m == float.MaxValue ? 0f : m;
     }
 

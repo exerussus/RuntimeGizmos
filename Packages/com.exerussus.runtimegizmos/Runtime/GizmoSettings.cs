@@ -4,19 +4,11 @@ using UnityEngine;
 namespace RuntimeGizmos
 {
     /// <summary>
-    /// Настройки отрисовки. Значение каждого поля разрешается по слоям, сверху вниз:
+    /// Значение разрешается по слоям: оверрайд из кода → ассет GizmoSettingsAsset из любой
+    /// папки Resources (платформенная секция, затем общая) → платформенный дефолт.
     ///
-    ///   1. рантайм-оверрайд из кода — GizmoSettings.X = v (снять: GizmoSettings.Overrides.X = null);
-    ///   2. ассет GizmoSettingsAsset из любой папки Resources — сначала его платформенная секция,
-    ///      затем общая;
-    ///   3. дефолт под текущую платформу из GizmoConfig.DefaultsFor.
-    ///
-    /// Платформенное измерение есть только у данных (дефолты и ассет). Коду оно не нужно:
-    /// код и так исполняется уже на целевой платформе, поэтому «оверрайд только для Android» —
-    /// это обычный if по GizmoSettings.Platform.
-    ///
-    /// Оверрайды живут ровно одну сессию: при входе в Play Mode они сбрасываются, даже если
-    /// Domain Reload выключен и статика физически пережила переход.
+    /// Оверрайды живут одну сессию: сбрасываются на входе в Play Mode, даже если
+    /// Domain Reload выключен и статика пережила переход.
     /// </summary>
     public static class GizmoSettings
     {
@@ -25,7 +17,7 @@ namespace RuntimeGizmos
         static GizmoConfig _resolved;
         static bool _valid;
 
-        /// <summary>Готовый снимок настроек со всеми применёнными слоями.</summary>
+        /// <summary>Снимок со всеми применёнными слоями.</summary>
         public static ref readonly GizmoConfig Current
         {
             get
@@ -71,11 +63,7 @@ namespace RuntimeGizmos
             }
         }
 
-        /// <summary>
-        /// Заставить систему считать себя другой платформой. Нужно ровно для одного:
-        /// посмотреть в редакторе, как гизмо будут выглядеть в мобильном или веб-билде.
-        /// null — определять автоматически.
-        /// </summary>
+        /// <summary>Посмотреть чужой профиль, не собирая билд. null — автоопределение.</summary>
         public static GizmoPlatform? PlatformOverride
         {
             get => _platformOverride;
@@ -89,13 +77,13 @@ namespace RuntimeGizmos
 
         // ==================================================== ассет
 
-        /// <summary>Имя ассета настроек. Ищется в любой папке Resources проекта.</summary>
+        /// <summary>Ищется в любой папке Resources.</summary>
         public const string AssetResourceName = "RuntimeGizmosSettings";
 
         static GizmoSettingsAsset _asset;
         static bool _assetLoaded;
 
-        /// <summary>Ассет настроек, если он есть в проекте. Иначе null — тогда работают дефолты.</summary>
+        /// <summary>Ассет настроек или null.</summary>
         public static GizmoSettingsAsset Asset
         {
             get
@@ -117,10 +105,7 @@ namespace RuntimeGizmos
 
         // ==================================================== оверрайды из кода
 
-        /// <summary>
-        /// Слой рантайм-оверрайдов. null в любом поле означает «не трогали» — тогда значение
-        /// придёт из ассета или из платформенного дефолта.
-        /// </summary>
+        /// <summary>Оверрайды из кода. null в поле — значение придёт из ассета или дефолта.</summary>
         public static class Overrides
         {
             /// <summary>Рисовать в игровых камерах, в том числе в билде.</summary>
@@ -221,11 +206,7 @@ namespace RuntimeGizmos
         /// <summary>Снять все оверрайды и вернуться к ассету и дефолтам.</summary>
         public static void ResetOverrides() => Overrides.Clear();
 
-        /// <summary>
-        /// Полный сброс статики: оверрайды, кэш платформы, ссылка на ассет.
-        /// Дёргается при входе в Play Mode и при выходе из него, чтобы состояние не протекало
-        /// между сессиями при выключенном Domain Reload.
-        /// </summary>
+        /// <summary>Сброс на границах Play Mode: оверрайды, кэш платформы, ссылка на ассет.</summary>
         internal static void ResetSession()
         {
             _platformOverride = null;
@@ -237,8 +218,7 @@ namespace RuntimeGizmos
 
         // ==================================================== короткая запись
 
-        // Читают разрешённое значение, пишут в слой оверрайдов.
-        // GizmoSettings.X = v — то же самое, что GizmoSettings.Overrides.X = v.
+        // Читают разрешённое, пишут в оверрайды.
 
         /// <summary>Рисовать в игровых камерах, в том числе в билде.</summary>
         public static bool DrawInGameView { get => Current.DrawInGameView; set => Overrides.DrawInGameView = value; }

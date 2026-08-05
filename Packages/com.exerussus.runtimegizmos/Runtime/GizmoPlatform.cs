@@ -2,10 +2,7 @@ using UnityEngine;
 
 namespace RuntimeGizmos
 {
-    /// <summary>
-    /// Класс платформы, а не конкретная платформа: настройки отрисовки различаются не между
-    /// Windows и Linux, а между «экран в метре от лица» и «экран в очках».
-    /// </summary>
+    /// <summary>Класс платформы: различие не между Windows и Linux, а между типами экрана.</summary>
     public enum GizmoPlatform
     {
         /// <summary>Windows, macOS, Linux, редактор.</summary>
@@ -28,16 +25,15 @@ namespace RuntimeGizmos
     {
         internal static GizmoPlatform Detect()
         {
-            // XR определяется первым: Quest — это Android, но настройки ему нужны свои.
+            // Первым: Quest — это Android, но профиль ему нужен свой.
 #if ENABLE_VR
             if (UnityEngine.XR.XRSettings.enabled && UnityEngine.XR.XRSettings.isDeviceActive)
                 return GizmoPlatform.XR;
 #endif
 
 #if UNITY_EDITOR
-            // В редакторе ориентируемся на активный build target, а не на то, что редактор
-            // крутится на десктопе: тогда Scene View показывает ровно те настройки, которые
-            // увидит игрок на целевой платформе, ещё до сборки.
+            // По активному build target, а не по тому, что редактор на десктопе:
+            // Scene View сразу показывает настройки целевой платформы.
             switch (UnityEditor.EditorUserBuildSettings.activeBuildTarget)
             {
                 case UnityEditor.BuildTarget.Android:
@@ -51,10 +47,9 @@ namespace RuntimeGizmos
                     return GizmoPlatform.Console;
 
                 default:
-                    // Консольные значения BuildTarget живут в отдельных модулях и время от
-                    // времени переименовываются, поэтому здесь их нет. На самой консоли
-                    // платформа определится в рантайме; в редакторе её можно выставить
-                    // руками через GizmoSettings.PlatformOverride.
+                    // Консольных BuildTarget здесь нет: живут в отдельных модулях и
+                    // периодически переименовываются. В рантайме определятся, в редакторе —
+                    // через GizmoSettings.PlatformOverride.
                     return GizmoPlatform.Desktop;
             }
 #else

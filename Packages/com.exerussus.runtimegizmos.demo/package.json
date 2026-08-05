@@ -1,6 +1,6 @@
 {
   "name": "com.exerussus.runtimegizmos.demo",
-  "version": "1.0.0",
+  "version": "1.2.1",
   "displayName": "Runtime Gizmos — демо",
   "description": "Демо-сцена и чеклист ручной проверки для Runtime Gizmos. Прогоняет все возможности пакета в одном компоненте. Требует установленного com.exerussus.runtimegizmos — поставьте его первым.",
   "unity": "6000.0",

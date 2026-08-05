@@ -51,7 +51,7 @@ public static class Rast
                 Dir = dir,
                 Nrm = new Vector2(-dir.y, dir.x),
                 HalfLen = len * 0.5f,
-                HalfW = Mathf.Abs(v.SideWidth.y) * 0.5f,
+                HalfW = v.Params.y * 0.5f,
             });
 
             // все шесть вершин квада обязаны нести одни и те же концы отрезка
@@ -65,7 +65,7 @@ public static class Rast
             int m1 = 0, p1 = 0, m2 = 0, p2 = 0;
             for (int k = 0; k < 6; k++)
             {
-                float sx = buf.Ptr[i + k].SideWidth.x;
+                float sx = buf.Ptr[i + k].Params.x;
                 if (sx == -1f) m1++; else if (sx == 1f) p1++;
                 else if (sx == -2f) m2++; else if (sx == 2f) p2++;
                 else return "(неизвестный код стороны " + sx + ")";
