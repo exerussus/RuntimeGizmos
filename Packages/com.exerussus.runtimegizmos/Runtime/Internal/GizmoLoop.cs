@@ -145,13 +145,17 @@ namespace RuntimeGizmos.Internal
                     for (int k = 0; k < children.Length; k++)
                         if (children[k].type == typeof(GizmoBeginFrame)) return true; // уже стоит
 
+                    int at = FindInsertIndex(children);
+
                     var next = new PlayerLoopSystem[children.Length + 1];
-                    next[0] = new PlayerLoopSystem
+                    Array.Copy(children, 0, next, 0, at);
+                    next[at] = new PlayerLoopSystem
                     {
                         type = typeof(GizmoBeginFrame),
                         updateDelegate = PlayerLoopBeginFrame
                     };
-                    Array.Copy(children, 0, next, 1, children.Length);
+                    Array.Copy(children, at, next, at + 1, children.Length - at);
+
                     subs[i].subSystemList = next;
                     root.subSystemList = subs;
                     return true;
@@ -165,6 +169,31 @@ namespace RuntimeGizmos.Internal
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Куда встать внутри PostLateUpdate: прямо перед первым узлом рендера.
+        ///
+        /// Раньше вставка шла жёстко в позицию 0, и это было хрупко вдвойне. За нулевой индекс
+        /// дерутся все, кто трогает PlayerLoop — например UniTask ставит туда свои раннеры, —
+        /// и победитель зависит от порядка инициализации, то есть от везения. Плюс из нулевой
+        /// позиции мы теряли бы вызовы, сделанные из PostLateUpdate-продолжений чужих
+        /// планировщиков: они бы опоздали на кадр.
+        ///
+        /// Настоящее требование к границе кадра — не «быть первой», а «быть после
+        /// пользовательского кода и до рендера». Именно оно здесь и обеспечивается.
+        /// Если узел рендера не найден (сменилась структура PlayerLoop) — встаём в начало,
+        /// как раньше: это заведомо до рендера.
+        /// </summary>
+        static int FindInsertIndex(PlayerLoopSystem[] children)
+        {
+            for (int i = 0; i < children.Length; i++)
+            {
+                var t = children[i].type;
+                if (t != null && t.Name.Contains("FinishFrameRendering")) return i;
+            }
+
+            return 0;
         }
 
         static void RemovePlayerLoop()

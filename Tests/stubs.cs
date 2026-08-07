@@ -180,7 +180,10 @@ namespace UnityEngine {
   public class Shader : Object { public bool isSupported=>Supported; public static bool Supported=true; public static bool Available=true;
     public static Shader Find(string n)=>Available?new Shader{name=n}:null; public static int PropertyToID(string n)=>0; }
   public class Material : Object { public Material(Shader s){} public int renderQueue;
-    public void SetFloat(int id,float v){} public void SetColor(int id,Color c){} public void SetTexture(int id,Texture t){} }
+    // Счётчик нужен кейсам про глобальную альфу: она раскладывается по материалам
+    // только при изменении, и проверить это можно лишь числом вызовов.
+    public static int SetFloatCalls;
+    public void SetFloat(int id,float v){ SetFloatCalls++; } public void SetColor(int id,Color c){} public void SetTexture(int id,Texture t){} }
   public class MaterialPropertyBlock { public void SetColor(int id,Color c){} public void SetTexture(int id,Texture t){} public void SetFloat(int id,float v){} public void Clear(){} }
   public class Mesh : Object { public Bounds bounds; public int subMeshCount; public int vertexCount;
     public Vector3[] vertices; public int[] triangles;
@@ -190,17 +193,26 @@ namespace UnityEngine {
     public int VBCap=-1, IBCap=-1, IBFilled=-1, VertStride;
     public Rendering.SubMeshDescriptor Sub; public bool SubSet;
     public readonly List<(int dst,int cnt)> Writes = new List<(int,int)>(); public int Covered;
+
+    // Счётчики трафика в GPU-буферы. Нужны бенчмарку: главная цена статики —
+    // это перезаливка одних и тех же вершин каждый кадр, и её надо видеть числом,
+    // а не на глаз по профайлеру.
+    public static long UpVerts, UpBytes, IdxBytes; public static int UpCalls, IdxCalls, ParamCalls;
+    public static void ResetCounters(){ UpVerts=UpBytes=IdxBytes=0; UpCalls=IdxCalls=ParamCalls=0; }
+
     public void SetVertexBufferParams(int c, params Rendering.VertexAttributeDescriptor[] a){
-      VBCap=c; VertStride=0; foreach(var x in a) VertStride+=x.ByteSize; Writes.Clear(); }
+      VBCap=c; VertStride=0; foreach(var x in a) VertStride+=x.ByteSize; Writes.Clear(); ParamCalls++; }
     public void SetVertexBufferData<T>(Unity.Collections.NativeArray<T> d,int s,int o,int c,int stream=0,Rendering.MeshUpdateFlags f=Rendering.MeshUpdateFlags.Default) where T:struct {
       if (VBCap>=0 && o+c > VBCap) throw new InvalidOperationException("ЗАЛИВКА ЗА ЁМКОСТЬ ВЕРШИННОГО БУФЕРА: dst="+o+" cnt="+c+" cap="+VBCap);
       if (s+c > d.Length) throw new InvalidOperationException("ЧТЕНИЕ ЗА ГРАНИЦУ ИСТОЧНИКА: src="+s+" cnt="+c+" len="+d.Length);
       if (System.Runtime.CompilerServices.Unsafe.SizeOf<T>() != VertStride) throw new InvalidOperationException("РАЗМЕР ВЕРШИНЫ НЕ СОВПАЛ С РАЗМЕТКОЙ: struct="+System.Runtime.CompilerServices.Unsafe.SizeOf<T>()+" layout="+VertStride);
+      UpCalls++; UpVerts+=c; UpBytes+=(long)c*VertStride;
       Writes.Add((o,c)); }
     public void SetIndexBufferParams(int c, Rendering.IndexFormat f){ IBCap=c; IBFilled=0; }
     public void SetIndexBufferData<T>(Unity.Collections.NativeArray<T> d,int s,int o,int c,Rendering.MeshUpdateFlags f=Rendering.MeshUpdateFlags.Default) where T:struct {
       if (s+c > d.Length) throw new InvalidOperationException("ИНДЕКСОВ В ПУЛЕ МЕНЬШЕ, ЧЕМ ЗАЛИВАЕТСЯ: cnt="+c+" пул="+d.Length);
       if (o+c > IBCap) throw new InvalidOperationException("ЗАЛИВКА ЗА ЁМКОСТЬ ИНДЕКСНОГО БУФЕРА");
+      IdxCalls++; IdxBytes+=(long)c*4;
       IBFilled=o+c; }
     public void SetSubMesh(int i, Rendering.SubMeshDescriptor d, Rendering.MeshUpdateFlags f=Rendering.MeshUpdateFlags.Default){
       if (d.indexStart+d.indexCount > IBFilled) throw new InvalidOperationException("SUBMESH ССЫЛАЕТСЯ НА НЕЗАЛИТЫЕ ИНДЕКСЫ: нужно "+(d.indexStart+d.indexCount)+", залито "+IBFilled);
@@ -236,10 +248,13 @@ namespace UnityEngine {
   public static class Screen { public static int width=>1920; public static int height=>1080; public static float dpi=>0; }
   public static class SystemInfo { public static bool usesReversedZBuffer=true; public static int systemMemorySize=>0; }
   public static class Graphics { public static int Calls; public static readonly List<Mesh> Last = new List<Mesh>();
+    // Бенчмарк гоняет тысячи кадров: без выключателя список сабмитов вырос бы
+    // до сотен тысяч записей и мерил бы уже сам себя.
+    public static bool Record = true;
     public static void RenderMesh(in Rendering.RenderParams rp, Mesh m, int sub, Matrix4x4 mtx){
       if (m == null) throw new ArgumentNullException("mesh");
       if (sub < 0 || sub >= Math.Max(1,m.subMeshCount)) throw new ArgumentOutOfRangeException("submesh="+sub+" count="+m.subMeshCount);
-      Calls++; Last.Add(m); } }
+      Calls++; if (Record) Last.Add(m); } }
   public class ScriptableObject : Object { public static T CreateInstance<T>() where T : ScriptableObject => null; }
   public class GUIContent { public static GUIContent none=>null; public Texture image; public string text; }
   [AttributeUsage(AttributeTargets.Field)] public class SerializeField : Attribute {}

@@ -52,6 +52,7 @@ namespace RuntimeGizmos
         [Tooltip("Сегментов в кольце сплошной сферы.")] public GizmoOptionalInt SphereSegments;
         [Tooltip("Edit Mode: сколько секунд держать последний снимок геометрии без новых команд.")] public GizmoOptionalFloat EditorStaleTimeout;
         [Tooltip("Edit Mode: запрашивать перерисовку Scene View при появлении новой геометрии.")] public GizmoOptionalBool EditorAutoRepaint;
+        [Tooltip("Отступ угловых надписей DrawScreenText от краёв экрана, в пикселях. Считается до края чернил.")] public GizmoOptionalFloat ScreenSafeArea;
 
         public void ApplyTo(ref GizmoConfig c)
         {
@@ -69,6 +70,7 @@ namespace RuntimeGizmos
             if (SphereSegments.Use) c.SphereSegments = SphereSegments.Value;
             if (EditorStaleTimeout.Use) c.EditorStaleTimeout = EditorStaleTimeout.Value;
             if (EditorAutoRepaint.Use) c.EditorAutoRepaint = EditorAutoRepaint.Value;
+            if (ScreenSafeArea.Use) c.ScreenSafeArea = ScreenSafeArea.Value;
         }
     }
 

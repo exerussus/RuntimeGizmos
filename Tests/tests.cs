@@ -1614,6 +1614,154 @@ public static class Tests
             Check("Y10 ключ меша работает в словаре", mkeys.Count == 3, "" + mkeys.Count);
         }
 
+        // ==================================================== Z. пропуск лишней работы
+        Group("Z. Пропуск лишней работы на статике");
+        {
+            Camera Cam() { var c = new Camera { cameraType = CameraType.Game }; c.transform = new Transform(); return c; }
+
+            // ВНИМАНИЕ: читать retained здесь нужно через .Retained, а не .Target(true).
+            // Target — это заявка на запись, он поднимает флаги и сам себе испортил бы
+            // замер числа заливок.
+
+            // --- неизменная retained-геометрия
+            Boot(); GizmoRenderer.Ensure();
+            var thinZ = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            var camZ = Cam();
+            Gizmo.lineWidth = 1f;
+
+            Tick(7000f);
+            Gizmo.duration = 1000f;
+            for (int i = 0; i < 50; i++) Gizmo.DrawLine(new Vector3(i, 0, 0), new Vector3(i, 1, 0));
+            Gizmo.duration = 0f;
+            Tick(7000.016f);
+            GizmoRenderer.Submit(camZ);                       // первая, настоящая заливка
+
+            Mesh.ResetCounters();
+            Tick(7000.032f);
+            GizmoRenderer.Submit(camZ);
+            Check("Z1 неизменная retained-геометрия не перезаливается", Mesh.UpCalls == 0, "заливок=" + Mesh.UpCalls);
+            Check("Z2 но меш всё равно отдаётся на отрисовку", thinZ[0].Prepare(out var meshZ1, out _) && meshZ1 != null);
+
+            for (int f = 0; f < 10; f++) { Tick(7000.048f + f * 0.016f); GizmoRenderer.Submit(camZ); }
+            Check("Z3 и через десяток кадров заливок по-прежнему нет", Mesh.UpCalls == 0, "заливок=" + Mesh.UpCalls);
+
+            thinZ[0].Prepare(out var meshZ2, out _);
+            Check("Z4 при пропуске отдаётся тот же самый меш", ReferenceEquals(meshZ1, meshZ2));
+
+            var bufZ = thinZ[0].Retained;
+            Check("Z5 bounds retained-буфера переживают пропуск компактора",
+                  bufZ.HasBounds && bufZ.Min.x <= 0f && bufZ.Max.x >= 49f,
+                  "min=" + bufZ.Min + " max=" + bufZ.Max);
+
+            // --- истечение обязано пробить пропуск
+            Boot(); GizmoRenderer.Ensure();
+            thinZ = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            camZ = Cam(); Gizmo.lineWidth = 1f;
+
+            Tick(8000f);
+            Gizmo.duration = 1f; Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Gizmo.duration = 5f; Gizmo.DrawLine(Vector3.one, Vector3.zero);
+            Gizmo.duration = 0f;
+            Tick(8000.016f); GizmoRenderer.Submit(camZ);
+
+            Mesh.ResetCounters();
+            Tick(8000.032f); GizmoRenderer.Submit(camZ);
+            Check("Z6 пока никто не истёк — заливок нет", Mesh.UpCalls == 0, "заливок=" + Mesh.UpCalls);
+
+            Tick(8002f); Tick(8002.02f);
+            GizmoRenderer.Submit(camZ);
+            Check("Z7 истечение примитива возвращает заливку", Mesh.UpCalls > 0, "заливок=" + Mesh.UpCalls);
+            Check("Z8 после истечения остался ровно один примитив",
+                  thinZ[0].Retained.Count == 2, "вершин=" + thinZ[0].Retained.Count);
+
+            // --- динамика не должна «оптимизироваться» в неподвижность
+            Boot(); GizmoRenderer.Ensure();
+            camZ = Cam(); Gizmo.lineWidth = 1f;
+            Mesh.ResetCounters();
+            for (int f = 0; f < 5; f++)
+            {
+                Gizmo.DrawLine(new Vector3(f, 0, 0), new Vector3(f, 1, 0));
+                Tick(10000f + f * 0.016f);
+                GizmoRenderer.Submit(camZ);
+            }
+            Check("Z9 кадровая геометрия заливается каждый кадр", Mesh.UpCalls >= 4, "заливок=" + Mesh.UpCalls);
+
+            // --- retained и кадровая в одном канале
+            Boot(); GizmoRenderer.Ensure();
+            thinZ = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            camZ = Cam(); Gizmo.lineWidth = 1f;
+
+            Tick(12000f);
+            Gizmo.duration = 1000f; Gizmo.DrawLine(Vector3.zero, Vector3.one); Gizmo.duration = 0f;
+            Tick(12000.016f); GizmoRenderer.Submit(camZ);
+
+            Mesh.ResetCounters(); Graphics.Last.Clear();
+            Gizmo.DrawLine(Vector3.one, Vector3.zero);        // кадровая поверх retained
+            Tick(12000.032f); GizmoRenderer.Submit(camZ);
+            Check("Z10 кадровая поверх retained возвращает заливку", Mesh.UpCalls > 0, "заливок=" + Mesh.UpCalls);
+            bool bothZ = false;
+            foreach (var m in Graphics.Last) if (m.Sub.vertexCount == 4) bothZ = true;
+            Check("Z11 в меше обе части сразу", bothZ);
+
+            Mesh.ResetCounters();
+            Tick(12000.048f); GizmoRenderer.Submit(camZ);
+            Check("Z12 исчезновение кадровой части тоже перезаливает", Mesh.UpCalls > 0, "заливок=" + Mesh.UpCalls);
+
+            Mesh.ResetCounters();
+            Tick(12000.064f); GizmoRenderer.Submit(camZ);
+            Check("Z13 и следом снова тишина", Mesh.UpCalls == 0, "заливок=" + Mesh.UpCalls);
+
+            // --- ClearAll обнуляет и состояние пропуска
+            GizmoRenderer.ClearAll();
+            Tick(12001f);
+            Check("Z14 после ClearAll канал ничего не отдаёт", !thinZ[0].Prepare(out _, out _));
+            Gizmo.Reset();
+        }
+
+        // ==================================================== AA. глобальная альфа
+        Group("AA. Глобальная альфа");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            var camA = new Camera { cameraType = CameraType.Game }; camA.transform = new Transform();
+            Gizmo.lineWidth = 1f;
+
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Tick(13000f);
+            GizmoRenderer.Submit(camA);           // первый Submit раскладывает альфу в любом случае
+
+            Material.SetFloatCalls = 0;
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Tick(13000.016f);
+            GizmoRenderer.Submit(camA);
+            GizmoRenderer.Submit(camA);           // вторая камера того же кадра
+            Check("AA1 неизменная альфа не трогает материалы", Material.SetFloatCalls == 0,
+                  "вызовов=" + Material.SetFloatCalls);
+
+            GizmoSettings.GlobalAlpha = 0.5f;
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Tick(13000.032f);
+            Material.SetFloatCalls = 0;
+            GizmoRenderer.Submit(camA);
+            Check("AA2 изменение альфы раскладывается по десяти материалам", Material.SetFloatCalls == 10,
+                  "вызовов=" + Material.SetFloatCalls);
+
+            Material.SetFloatCalls = 0;
+            GizmoRenderer.Submit(camA);
+            Check("AA3 следующий Submit с той же альфой молчит", Material.SetFloatCalls == 0,
+                  "вызовов=" + Material.SetFloatCalls);
+
+            // Пересоздание материалов обязано сбросить кэш, иначе после Play Mode
+            // альфа осталась бы от прошлых, уже уничтоженных материалов.
+            GizmoRenderer.Dispose();
+            GizmoRenderer.Ensure();
+            Material.SetFloatCalls = 0;
+            GizmoRenderer.Submit(camA);
+            Check("AA4 после пересоздания материалов альфа применяется заново",
+                  Material.SetFloatCalls == 10, "вызовов=" + Material.SetFloatCalls);
+
+            GizmoSettings.ResetOverrides();
+        }
+
         Console.WriteLine("\n═══════════════════════════════════");
         Console.WriteLine($"  прошло {_pass}, упало {_fail}");
         Console.WriteLine("═══════════════════════════════════");

@@ -107,7 +107,9 @@ Shader "Hidden/RuntimeGizmos/Text"
                 OUT.metrics = float2(halfLen, halfW);
 
                 float4 clip;
-                if (mode > 1.5)
+                bool screenSpace = mode > 1.5;
+
+                if (screenSpace)
                 {
                     // Якорь задан в пикселях экрана, начало в левом верхнем углу.
                     float2 px = float2(IN.positionOS.x + p.x, IN.positionOS.y - p.y);
@@ -137,7 +139,13 @@ Shader "Hidden/RuntimeGizmos/Text"
                     clip.xy += p * (2.0 / max(_ScreenParams.xy, float2(1.0, 1.0))) * clip.w;
                 }
 
-                OUT.positionCS = GizmoApplyDepthBias(clip, _DepthBias);
+                // Смещение глубины — только для мировых режимов. Экранная вершина уже стоит
+                // РОВНО на ближней плоскости, и любой сдвиг выталкивает её за пределы объёма
+                // отсечения: на reversed-Z (DirectX, Vulkan, Metal) z становится больше w,
+                // и растеризатор молча выкидывает весь треугольник. Именно поэтому мировой
+                // текст рисовался, а экранный — нет, хотя материал у них общий.
+                // Экранному тексту смещение и не нужно: z-файтить ему не с чем.
+                OUT.positionCS = screenSpace ? clip : GizmoApplyDepthBias(clip, _DepthBias);
 
                 half4 c = IN.color;
                 c.rgb = GizmoDecodeColor(c.rgb);

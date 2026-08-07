@@ -106,6 +106,12 @@ namespace RuntimeGizmos.Internal
         static float _meshLastData;
         static bool _linearColor;
 
+        // Последняя альфа, уже разложенная по материалам. GlobalAlpha меняется редко,
+        // а SetFloat дёргался на каждый канал, на каждую камеру, каждый кадр.
+        // NaN на старте: любое сравнение с ним ложно, поэтому первый Submit применит
+        // значение в любом случае, даже если оно совпало с тем, что выставил MakeMat.
+        static float _appliedAlpha = float.NaN;
+
         // ==================================================================== init / teardown
 
         static bool _failed;
@@ -138,6 +144,7 @@ namespace RuntimeGizmos.Internal
             }
 
             _ready = true;
+            _appliedAlpha = float.NaN;      // материалы пересозданы — кэш недействителен
             Width = GizmoSettings.DefaultLineWidth;
 
             _thinMat = new Material[2];
@@ -380,18 +387,19 @@ namespace RuntimeGizmos.Internal
             };
 
             float alpha = GizmoSettings.GlobalAlpha;
+            ApplyAlpha(alpha);
 
             for (int z = 0; z < 2; z++)
             {
-                if (_tri[z].Prepare(out var m, out var b)) Emit(ref rp, _triMat[z], m, b, alpha);
-                if (_thin[z].Prepare(out m, out b)) Emit(ref rp, _thinMat[z], m, b, alpha);
-                if (_wide[z].Prepare(out m, out b)) Emit(ref rp, _wideMat[z], m, b, alpha);
+                if (_tri[z].Prepare(out var m, out var b)) Emit(ref rp, _triMat[z], m, b);
+                if (_thin[z].Prepare(out m, out b)) Emit(ref rp, _thinMat[z], m, b);
+                if (_wide[z].Prepare(out m, out b)) Emit(ref rp, _wideMat[z], m, b);
             }
 
             var textBounds = new Bounds(cam.transform.position, new Vector3(1e5f, 1e5f, 1e5f));
             for (int z = 0; z < 2; z++)
                 if (_text[z].Prepare(out var tm, out _))
-                    Emit(ref rp, _textMat[z], tm, textBounds, alpha);
+                    Emit(ref rp, _textMat[z], tm, textBounds);
 
             foreach (var kv in _icons)
                 if (kv.Value.Channel.Prepare(out var m, out var b))
@@ -422,19 +430,38 @@ namespace RuntimeGizmos.Internal
             }
 
             _mpbCursor = 0;
-            SubmitMeshList(ref rp, _meshRetained, alpha);
-            SubmitMeshList(ref rp, _meshFront, alpha);
+            SubmitMeshList(ref rp, _meshRetained);
+            SubmitMeshList(ref rp, _meshFront);
         }
 
-        static void Emit(ref RenderParams rp, Material mat, Mesh mesh, Bounds b, float alpha)
+        /// <summary>
+        /// Раскладывает глобальную альфу по материалам — но только когда она
+        /// действительно поменялась. Набор материалов здесь ровно тот, что получал
+        /// альфу раньше: иконки и экранные квады её не берут ни до, ни после.
+        /// </summary>
+        static void ApplyAlpha(float alpha)
         {
-            mat.SetFloat(AlphaId, alpha);
+            if (alpha == _appliedAlpha) return;
+            _appliedAlpha = alpha;
+
+            for (int z = 0; z < 2; z++)
+            {
+                _triMat[z].SetFloat(AlphaId, alpha);
+                _thinMat[z].SetFloat(AlphaId, alpha);
+                _wideMat[z].SetFloat(AlphaId, alpha);
+                _textMat[z].SetFloat(AlphaId, alpha);
+                _meshMat[z].SetFloat(AlphaId, alpha);
+            }
+        }
+
+        static void Emit(ref RenderParams rp, Material mat, Mesh mesh, Bounds b)
+        {
             rp.material = mat;
             rp.worldBounds = b;
             Graphics.RenderMesh(rp, mesh, 0, Matrix4x4.identity);
         }
 
-        static void SubmitMeshList(ref RenderParams rp, GizmoMeshCmdList list, float alpha)
+        static void SubmitMeshList(ref RenderParams rp, GizmoMeshCmdList list)
         {
             for (int i = 0; i < list.Count; i++)
             {
@@ -442,7 +469,6 @@ namespace RuntimeGizmos.Internal
                 if (c.Mesh == null) continue;
 
                 var mat = _meshMat[c.Z];
-                mat.SetFloat(AlphaId, alpha);
 
                 while (_mpbPool.Count <= _mpbCursor) _mpbPool.Add(new MaterialPropertyBlock());
                 var mpb = _mpbPool[_mpbCursor++];
@@ -478,7 +504,15 @@ namespace RuntimeGizmos.Internal
             // Запись идёт сырыми указателями в нативные буферы без всякой синхронизации,
             // поэтому вызов из джоба или потока — это тихая порча кучи, которая всплывёт
             // через несколько кадров в совершенно другом месте. Ловим сразу.
-            if (System.Threading.Thread.CurrentThread.ManagedThreadId != MainThreadId && !ReportThread())
+            // MainThreadId == 0 означает «Install ещё не отработал», а не «чужой поток».
+            // Без этой оговорки проверка срабатывала на ГЛАВНОМ потоке: любой Draw*, случившийся
+            // до GizmoLoop.Install (порядок InitializeOnLoadMethod между сборками не определён,
+            // а после Dispose флаг отчёта сбрасывается), сравнивался с нулём и всегда его не
+            // проходил. В итоге рисование молча выключалось и печаталась ошибка про поток,
+            // которого не было.
+            if (MainThreadId != 0
+                && System.Threading.Thread.CurrentThread.ManagedThreadId != MainThreadId
+                && !ReportThread())
                 return false;
 #endif
 
@@ -502,7 +536,14 @@ namespace RuntimeGizmos.Internal
         {
             if (_threadReported) return false;
             _threadReported = true;
-            Debug.LogError("[RuntimeGizmos] Draw* вызван не из главного потока. " +
+
+            // Номер потока в сообщении нужен для диагностики: без него непонятно,
+            // кто именно вызвал, и остаётся только гадать. Стек-трейс Unity допишет сам.
+            var current = System.Threading.Thread.CurrentThread;
+
+            Debug.LogError($"[RuntimeGizmos] Draw* вызван не из главного потока " +
+                           $"(поток {current.ManagedThreadId} '{current.Name ?? "без имени"}', " +
+                           $"главный — {MainThreadId}). " +
                            "Буферы не потокобезопасны, вызовы из джобов и потоков игнорируются. " +
                            "Соберите данные в джобе и рисуйте после Complete().");
             return false;
@@ -654,25 +695,33 @@ namespace RuntimeGizmos.Internal
         {
             if (string.IsNullOrEmpty(text)) return;
 
-            const float pad = 8f;
             int idx = (int)corner;
             GizmoFont.Measure(text, out int lines, out _);
 
-            float step = GizmoFont.LineStep * (size / GizmoFont.CapHeight);
+            float scale = size / GizmoFont.CapHeight;
+            float step = GizmoFont.LineStep * scale;
             float used = _cornerLines[idx] * step;
             _cornerLines[idx] += lines;
 
             bool right = corner == GizmoCorner.TopRight || corner == GizmoCorner.BottomRight;
             bool bottom = corner == GizmoCorner.BottomLeft || corner == GizmoCorner.BottomRight;
 
-            float x = right ? Screen.width - pad : pad;
-            float y = bottom
-                ? Screen.height - pad - used - (lines - 1) * step
-                : pad + used + (lines - 1) * step * 0.5f;
+            // Безопасная зона считается до КРАЯ ЧЕРНИЛ, а не до якоря строки.
+            //
+            // Якорь — вертикальный центр блока, и раньше отступ отмерялся от него: у верхних
+            // надписей за экран уезжала вся высота заглавной (это ровно size пикселей),
+            // у нижних — выносные элементы (Baseline * scale). Визуально текст лип к краю
+            // и обрезался, хотя формально «отступ» был.
+            float pad = Mathf.Max(0f, GizmoSettings.ScreenSafeArea);
+            float halfBlock = (lines - 1) * step * 0.5f;
+            float capTop = GizmoFont.CapHeight * scale;      // от якоря вверх до верха заглавной
+            float descender = GizmoFont.Baseline * scale;    // от якоря вниз до низа выносного
+            float halfStroke = Mathf.Max(1f, Width) * 0.5f;  // штрих рисуется капсулой, шире отрезка
 
-            // Многострочный блок центрируется по вертикали вокруг якоря — компенсируем,
-            // чтобы стопка в углу шла ровно.
-            if (!bottom) y = pad + used + (lines - 1) * step * 0.5f;
+            float x = right ? Screen.width - pad - halfStroke : pad + halfStroke;
+            float y = bottom
+                ? Screen.height - pad - used - halfBlock - descender
+                : pad + used + halfBlock + capTop;
 
             Text(text, new Vector3(x, y, 0f), size, Vector2.zero,
                  right ? 1f : 0f, 2);

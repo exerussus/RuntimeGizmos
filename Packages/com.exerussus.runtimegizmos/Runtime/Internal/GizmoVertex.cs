@@ -7,7 +7,7 @@ namespace RuntimeGizmos.Internal
     // ВАЖНО: во всех вершинных структурах Position обязан лежать по смещению 0.
     // Компактор retained-буфера читает позицию как *(Vector3*)vertexPtr.
 
-    /// <summary>16 байт. Тонкие линии (MeshTopology.Lines) и заливка (Triangles).</summary>
+    /// <summary>20 байт. Тонкие линии (MeshTopology.Lines) и заливка (Triangles).</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct GizmoVertex
     {
@@ -18,7 +18,7 @@ namespace RuntimeGizmos.Internal
         public float Dash;
     }
 
-    /// <summary>36 байт. Толстые линии: разворачиваются в квад в вершинном шейдере.</summary>
+    /// <summary>40 байт. Толстые линии: разворачиваются в квад в вершинном шейдере.</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct GizmoWideVertex
     {
@@ -41,7 +41,7 @@ namespace RuntimeGizmos.Internal
     /// <summary>
     /// Вершина текстовой метки. Position — мировой якорь строки (обязан лежать по смещению 0,
     /// компактор отложенной геометрии читает его как Vector3), остальное — смещения в пикселях.
-    /// 40 байт.
+    /// 44 байта.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal struct GizmoTextVertex

@@ -164,6 +164,10 @@ namespace RuntimeGizmos
             public static bool? EditorAutoRepaint { get => _EditorAutoRepaint; set { _EditorAutoRepaint = value; Invalidate(); } }
             static bool? _EditorAutoRepaint;
 
+            /// <summary>Отступ угловых надписей DrawScreenText от краёв экрана, в пикселях.</summary>
+            public static float? ScreenSafeArea { get => _ScreenSafeArea; set { _ScreenSafeArea = value; Invalidate(); } }
+            static float? _ScreenSafeArea;
+
             /// <summary>Снять все оверрайды и вернуться к ассету и дефолтам.</summary>
             public static void Clear()
             {
@@ -181,6 +185,7 @@ namespace RuntimeGizmos
                 _SphereSegments = null;
                 _EditorStaleTimeout = null;
                 _EditorAutoRepaint = null;
+                _ScreenSafeArea = null;
                 Invalidate();
             }
 
@@ -200,6 +205,7 @@ namespace RuntimeGizmos
                 if (_SphereSegments.HasValue) c.SphereSegments = _SphereSegments.Value;
                 if (_EditorStaleTimeout.HasValue) c.EditorStaleTimeout = _EditorStaleTimeout.Value;
                 if (_EditorAutoRepaint.HasValue) c.EditorAutoRepaint = _EditorAutoRepaint.Value;
+                if (_ScreenSafeArea.HasValue) c.ScreenSafeArea = _ScreenSafeArea.Value;
             }
         }
 
@@ -243,6 +249,12 @@ namespace RuntimeGizmos
 
         /// <summary>Сдвиг глубины к камере (в единицах NDC) для линий с тестом глубины.</summary>
         public static float DepthBias { get => Current.DepthBias; set => Overrides.DepthBias = value; }
+
+        /// <summary>
+        /// Отступ угловых надписей DrawScreenText от краёв экрана, в пикселях.
+        /// Считается до края чернил, а не до якоря строки.
+        /// </summary>
+        public static float ScreenSafeArea { get => Current.ScreenSafeArea; set => Overrides.ScreenSafeArea = value; }
 
         /// <summary>Потолок роста вершинного буфера на канал. 0 — без ограничения.</summary>
         public static int MaxVerticesPerChannel { get => Current.MaxVerticesPerChannel; set => Overrides.MaxVerticesPerChannel = value; }

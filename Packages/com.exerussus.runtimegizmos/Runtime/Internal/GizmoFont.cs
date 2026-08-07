@@ -8,8 +8,10 @@ namespace RuntimeGizmos.Internal
     /// Штриховой шрифт: глиф — набор отрезков на сетке x 0..4, y 0..9. Базовая линия y=2,
     /// высота строчной y=6, прописной y=8, выносной элемент до y=0, диакритика до y=9.
     ///
-    /// Покрытие: ASCII 32..126, кириллица А..я, Ё и ё. Непокрытый символ рисуется пустым
-    /// прямоугольником: молча пропадать он не должен, иначе подпись врёт о своём содержимом.
+    /// Покрытие: ASCII 32..126, кириллица А..я, Ё и ё, плюс типографика « » — – … № × ° • → ← ↔ ±.
+    /// Полный список — в README, раздел «Поддерживаемые символы»; он же проверяется тестом.
+    /// Непокрытый символ рисуется пустым прямоугольником: молча пропадать он не должен,
+    /// иначе подпись врёт о своём содержимом.
     ///
     /// Свой, а не системный, потому что OS-шрифты недоступны на WebGL и консолях, а
     /// динамический атлас требует обработки Font.textureRebuilt.
@@ -27,7 +29,29 @@ namespace RuntimeGizmos.Internal
 
         const int SlotYo = CyrBase + CyrSlots;                // Ё
         const int SlotYoLower = SlotYo + 1;                   // ё
-        const int SlotTofu = SlotYoLower + 1;                 // заглушка
+
+        // Типографика, которой нет в ASCII, но которая постоянно лезет в русский текст:
+        // кавычки-ёлочки, тире, многоточие, номер. Без них подпись показывает квадраты
+        // ровно там, где автор написал обычное тире.
+        //
+        // ПОРЯДОК ОБЯЗАН СОВПАДАТЬ с хвостом _glyphs и со switch в Slot().
+        // Тест GlyphCoverage сверяет это автоматически.
+        const int SlotExtrasBase = SlotYoLower + 1;
+        const int SlotLaquo     = SlotExtrasBase + 0;   // «
+        const int SlotRaquo     = SlotExtrasBase + 1;   // »
+        const int SlotEmDash    = SlotExtrasBase + 2;   // —
+        const int SlotEnDash    = SlotExtrasBase + 3;   // –
+        const int SlotEllipsis  = SlotExtrasBase + 4;   // …
+        const int SlotNumero    = SlotExtrasBase + 5;   // №
+        const int SlotTimes     = SlotExtrasBase + 6;   // ×
+        const int SlotDegree    = SlotExtrasBase + 7;   // °
+        const int SlotBullet    = SlotExtrasBase + 8;   // •
+        const int SlotArrowR    = SlotExtrasBase + 9;   // →
+        const int SlotArrowL    = SlotExtrasBase + 10;  // ←
+        const int SlotArrowLR   = SlotExtrasBase + 11;  // ↔
+        const int SlotPlusMinus = SlotExtrasBase + 12;  // ±
+
+        const int SlotTofu = SlotPlusMinus + 1;               // заглушка
         const int SlotCount = SlotTofu + 1;
 
         /// <summary>
@@ -215,6 +239,21 @@ namespace RuntimeGizmos.Internal
             "424616051444|2402",                           // я
             "48080242|0535|1919|3939",                     // Ё
             "04444536160503123243|1717|3737",              // ё
+            // --- типографика, порядок как у Slot* выше ---
+            "270523|472543",                                // «
+            "072503|274523",                                // »
+            "0555",                                         // — на всю ширину ячейки, длиннее дефиса
+            "0545",                                         // – короче длинного тире
+            "0202|2222|4242",                                // …
+            "02082228|3646483836|3444",                      // №
+            "1533|1335",                                     // ×
+            "1727281817",                                    // °
+            "2424",                                          // •
+            "0444|354433",                                   // →
+            "0444|150413",                                   // ←
+            "0444|150413|354433",                            // ↔
+            "2824|0646|0343",                                // ±
+
             "0242470702",                                  // заглушка
         };
 
@@ -294,6 +333,26 @@ namespace RuntimeGizmos.Internal
             if (c >= CyrFirst && c <= CyrLast) return CyrBase + (c - CyrFirst);
             if (c == 'Ё') return SlotYo;
             if (c == 'ё') return SlotYoLower;
+
+            // switch компилируется в таблицу переходов: перебор массивом стоил бы
+            // линейного поиска на каждый символ каждой подписи каждый кадр.
+            switch (c)
+            {
+                case '«': return SlotLaquo;
+                case '»': return SlotRaquo;
+                case '—': return SlotEmDash;
+                case '–': return SlotEnDash;
+                case '…': return SlotEllipsis;
+                case '№': return SlotNumero;
+                case '×': return SlotTimes;
+                case '°': return SlotDegree;
+                case '•': return SlotBullet;
+                case '→': return SlotArrowR;
+                case '←': return SlotArrowL;
+                case '↔': return SlotArrowLR;
+                case '±': return SlotPlusMinus;
+            }
+
             return SlotTofu;
         }
 
@@ -305,6 +364,16 @@ namespace RuntimeGizmos.Internal
             start = _start[i];
             count = _start[i + 1] - start;
             return count > 0;
+        }
+
+        /// <summary>
+        /// Есть ли у символа собственный глиф. Управляющие символы считаются
+        /// поддержанными: они и не должны ничего рисовать.
+        /// </summary>
+        public static bool Supported(char c)
+        {
+            if (c == '\n' || c == '\r' || c == '\t') return true;
+            return Slot(c) != SlotTofu;
         }
 
         /// <summary>Ширина строки из count символов, в единицах сетки.</summary>

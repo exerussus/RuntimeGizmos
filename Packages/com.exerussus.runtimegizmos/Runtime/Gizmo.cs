@@ -102,6 +102,27 @@ namespace RuntimeGizmos
 
         public static void Reset() => ResetState();
 
+        /// <summary>
+        /// Нарисуется ли символ. Непокрытый даёт пустой квадрат — заметно, но узнать об этом
+        /// хочется до того, как подпись уедет к пользователю.
+        /// </summary>
+        public static bool IsRenderable(char c) => GizmoFont.Supported(c);
+
+        /// <summary>
+        /// Первый символ строки, для которого нет глифа, либо '\0'. Удобно поставить
+        /// в Assert рядом с локализацией: список покрытия описан в README.
+        /// </summary>
+        public static char FirstUnrenderable(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return '\0';
+
+            for (int i = 0; i < text.Length; i++)
+                if (!GizmoFont.Supported(text[i]))
+                    return text[i];
+
+            return '\0';
+        }
+
         // То же самое без [Conditional]: нужно слою GizmoLazy, который обязан
         // компилироваться и в релизе, даже если фактически там не исполняется.
         internal static void ResetState()

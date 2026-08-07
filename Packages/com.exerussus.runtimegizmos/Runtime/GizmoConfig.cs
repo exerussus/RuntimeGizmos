@@ -47,6 +47,15 @@ namespace RuntimeGizmos
         /// <summary>Edit Mode: запрашивать перерисовку Scene View при появлении новой геометрии.</summary>
         public bool EditorAutoRepaint;
 
+        /// <summary>
+        /// Отступ угловых надписей DrawScreenText от краёв экрана, в пикселях.
+        ///
+        /// Считается до КРАЯ ЧЕРНИЛ, а не до якоря строки: выносные элементы и верхушки
+        /// заглавных внутрь зоны не залезают. На телевизорах и телефонах с вырезом
+        /// поднимите значение — там края экрана физически не видны.
+        /// </summary>
+        public float ScreenSafeArea;
+
         /// <summary>Зажать в допустимые диапазоны, чтобы кривой ассет не ронял отрисовку.</summary>
         public void Sanitize()
         {
@@ -59,6 +68,7 @@ namespace RuntimeGizmos
             SphereRings           = Mathf.Clamp(SphereRings, 3, 64);
             SphereSegments        = Mathf.Clamp(SphereSegments, 4, 128);
             EditorStaleTimeout    = Mathf.Max(0f, EditorStaleTimeout);
+            ScreenSafeArea        = Mathf.Max(0f, ScreenSafeArea);
         }
 
         /// <summary>Дефолты под платформу.</summary>
@@ -74,6 +84,7 @@ namespace RuntimeGizmos
                 GlobalAlpha        = 1f,
                 EditorStaleTimeout = 0.35f,
                 EditorAutoRepaint  = true,
+                ScreenSafeArea     = 12f,
             };
 
             switch (platform)

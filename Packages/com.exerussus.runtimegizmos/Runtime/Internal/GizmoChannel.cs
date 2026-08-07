@@ -39,6 +39,21 @@ namespace RuntimeGizmos.Internal
         Bounds _readyBounds;
         float _lastDataTime;
 
+        // Пропуск лишней работы на неизменной геометрии.
+        //
+        // Статика, нарисованная с duration, стоила ровно столько же, сколько
+        // динамика: компактор каждый кадр обходил весь retained-буфер с
+        // Encapsulate на каждую вершину, а Prepare каждый кадр перезаливал в GPU
+        // те же самые байты. Оба прохода нужны, только если содержимое изменилось.
+        //
+        // _dirty            — содержимое отличается от того, что уже лежит в меше.
+        // _retainedTouched  — в retained писали, компактору нужен полный проход.
+        // _minExpiry        — ближайшее истечение среди retained; пока оно впереди,
+        //                     проходить буфер незачем: выбывать нечему.
+        bool _dirty = true;
+        bool _retainedTouched;
+        float _minExpiry = float.MaxValue;
+
         public GizmoChannel(string name, VertexAttributeDescriptor[] layout, MeshTopology topology,
             int primVerts, int initialCapacity, float boundsPadding = 0f)
         {
@@ -58,8 +73,19 @@ namespace RuntimeGizmos.Internal
         public GizmoNativeBuffer<T> Retained => _retained;
         public GizmoNativeBuffer<float> RetainedExpiry => _retainedExpiry;
 
-        /// <summary>Выбор целевого буфера: retained (с временем жизни) или кадровый.</summary>
-        public GizmoNativeBuffer<T> Target(bool retained) => retained ? _retained : _back;
+        /// <summary>
+        /// Выбор целевого буфера: retained (с временем жизни) или кадровый.
+        /// Вызов с retained = true считается заявкой на запись: писать в буфер,
+        /// не спросив его здесь, неоткуда, поэтому это единственная точка, где
+        /// нужно поднять флаги.
+        /// </summary>
+        public GizmoNativeBuffer<T> Target(bool retained)
+        {
+            if (!retained) return _back;
+            _retainedTouched = true;
+            _dirty = true;
+            return _retained;
+        }
 
         public void BeginFrame(bool strict, float now, float staleTimeout)
         {
@@ -72,13 +98,21 @@ namespace RuntimeGizmos.Internal
                 _back = tmp;
                 _back.Clear();
                 _lastDataTime = now;
+                _dirty = true;
             }
             else if (strict || now - _lastDataTime > staleTimeout)
             {
                 // strict (play mode): нет новых команд — значит в этом кадре ничего не рисуем.
                 // edit mode: держим последний снимок, пока он не протух, иначе будет мерцание
                 // между тиками EditorApplication.update и перерисовками вьюпорта.
-                _front.Clear();
+                //
+                // Чистим только когда есть что чистить: иначе на статичной сцене
+                // каждый кадр взводился бы _dirty и весь смысл флага пропал бы.
+                if (_front.Count > 0)
+                {
+                    _front.Clear();
+                    _dirty = true;
+                }
             }
 
             _prepared = false;
@@ -87,18 +121,33 @@ namespace RuntimeGizmos.Internal
         void CompactRetained(float now)
         {
             int n = _retained.Count;
-            if (n == 0) return;
+            if (n == 0)
+            {
+                _minExpiry = float.MaxValue;
+                _retainedTouched = false;
+                return;
+            }
+
+            // Ничего не дописывали, и ближайшее истечение ещё впереди — значит
+            // выбывать нечему, содержимое буфера то же, что и в прошлом кадре,
+            // а Min/Max посчитаны тогда же и остались верными.
+            //
+            // Условие точное, а не приблизительное: ниже примитив удаляется по
+            // e[r] <= now, и ни один не удалится ровно тогда, когда min(e) > now.
+            if (!_retainedTouched && _minExpiry > now) return;
 
             T* v = _retained.Ptr;
             float* e = _retainedExpiry.Ptr;
             int stride = _primVerts;
             int w = 0;
+            float minExpiry = float.MaxValue;
 
             _retained.ResetBounds();
 
             for (int r = 0; r < n; r += stride)
             {
                 if (e[r] <= now) continue;
+                if (e[r] < minExpiry) minExpiry = e[r];
 
                 if (w != r)
                 {
@@ -114,6 +163,10 @@ namespace RuntimeGizmos.Internal
 
             _retained.SetCount(w);
             _retainedExpiry.SetCount(w);
+
+            if (w != n) _dirty = true;      // что-то выбыло — меш пора перезалить
+            _minExpiry = minExpiry;
+            _retainedTouched = false;
         }
 
         /// <summary>Заливает данные в меш (один раз за кадр) и отдаёт его на отрисовку.</summary>
@@ -122,10 +175,20 @@ namespace RuntimeGizmos.Internal
             if (!_prepared)
             {
                 _prepared = true;
-                _readyMesh = null;
 
                 int total = _retained.Count + _front.Count;
-                if (total > 0) Upload(total);
+                if (total == 0)
+                {
+                    _readyMesh = null;
+                }
+                else if (_dirty || _readyMesh == null)
+                {
+                    Upload(total);
+                    _dirty = false;
+                }
+                // иначе в меше с прошлого кадра лежат ровно эти данные: и вершины,
+                // и bounds, и SubMeshDescriptor. Перезаливать нечего, курсор кольца
+                // мешей не двигаем — переиспользуем тот же меш, как обычную статику.
             }
 
             mesh = _readyMesh;
@@ -200,6 +263,9 @@ namespace RuntimeGizmos.Internal
             _retainedExpiry.Clear();
             _prepared = false;
             _readyMesh = null;
+            _dirty = true;
+            _retainedTouched = false;
+            _minExpiry = float.MaxValue;
         }
 
         public void Dispose()

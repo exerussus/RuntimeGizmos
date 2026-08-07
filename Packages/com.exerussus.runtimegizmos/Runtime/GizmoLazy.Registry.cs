@@ -36,6 +36,12 @@ namespace RuntimeGizmos
         public static void Add(in GizmoLazyTarget src, GizmoLazyKind kind, string file, int line,
                                Color color, float a, float b, string text, Object rf, Action custom)
         {
+            // Выключенный слой не должен копить регистрации. Раньше проверка стояла только
+            // в Tick: рисование прекращалось, а список продолжал расти — вплоть до MaxTracked
+            // и предупреждения о переполнении у слоя, который никто не рисует.
+            // Записи, сделанные до выключения, остаются: их разберёт Tick после включения.
+            if (!GizmoLazy.Enabled) return;
+
             if (src.Target == null) return;
 
             string key = src.ExplicitKey ?? file;

@@ -1,0 +1,12 @@
+{
+  "name": "com.exerussus.runtimegizmos.tests",
+  "version": "1.3.1",
+  "displayName": "Runtime Gizmos — тесты",
+  "description": "Тесты к Runtime Gizmos: EditMode и PlayMode. Вынесены отдельным пакетом, чтобы основной не тащил в проект ни тестовых сборок, ни зависимости на тест-фреймворк. Требует установленного com.exerussus.runtimegizmos.",
+  "unity": "6000.0",
+  "keywords": ["gizmos", "debug", "tests"],
+  "author": { "name": "exerussus", "url": "https://github.com/exerussus" },
+  "dependencies": {
+    "com.unity.test-framework": "1.6.0"
+  }
+}
