@@ -53,6 +53,9 @@ namespace RuntimeGizmos
         [Tooltip("Edit Mode: сколько секунд держать последний снимок геометрии без новых команд.")] public GizmoOptionalFloat EditorStaleTimeout;
         [Tooltip("Edit Mode: запрашивать перерисовку Scene View при появлении новой геометрии.")] public GizmoOptionalBool EditorAutoRepaint;
         [Tooltip("Отступ угловых надписей DrawScreenText от краёв экрана, в пикселях. Считается до края чернил.")] public GizmoOptionalFloat ScreenSafeArea;
+        [Tooltip("Просвет между колонками экранной таблицы, в ширинах символа.")] public GizmoOptionalFloat HudColumnGap;
+        [Tooltip("Потолок ячеек экранной раскладки на кадр. Буферы выделяются один раз под этот размер.")] public GizmoOptionalInt HudMaxCells;
+        [Tooltip("Потолок арены символов экранной раскладки, в char.")] public GizmoOptionalInt HudMaxChars;
 
         public void ApplyTo(ref GizmoConfig c)
         {
@@ -71,6 +74,9 @@ namespace RuntimeGizmos
             if (EditorStaleTimeout.Use) c.EditorStaleTimeout = EditorStaleTimeout.Value;
             if (EditorAutoRepaint.Use) c.EditorAutoRepaint = EditorAutoRepaint.Value;
             if (ScreenSafeArea.Use) c.ScreenSafeArea = ScreenSafeArea.Value;
+            if (HudColumnGap.Use) c.HudColumnGap = HudColumnGap.Value;
+            if (HudMaxCells.Use) c.HudMaxCells = HudMaxCells.Value;
+            if (HudMaxChars.Use) c.HudMaxChars = HudMaxChars.Value;
         }
     }
 

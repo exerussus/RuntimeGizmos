@@ -150,5 +150,60 @@ namespace RuntimeGizmos.Tests
         {
             for (int i = 0; i < 50; i++) GizmoLazy.Track(go).Volume(Color.red);
         }
+
+        /// <summary>
+        /// Ради этого экранная раскладка и держит текст срезами общей арены, а числа
+        /// форматирует через TryFormat: ToString() на каждое значение каждый кадр —
+        /// самый заметный источник мусора в отладочном выводе, и в профайлере он
+        /// маскирует ровно то, ради чего HUD включали.
+        ///
+        /// Замер покрывает и раскладку: Flush меряет текст, считает колонки и выпускает
+        /// вершины — если там заведётся строка или замыкание, тест это увидит.
+        /// </summary>
+        [Test]
+        public void Экранная_таблица_не_аллоцирует()
+        {
+            FillTable();   // прогрев: первое обращение выделяет арену и буферы раскладки
+
+            Assert.That(FillTable, Is.Not.AllocatingGCMemory());
+        }
+
+        [Test]
+        public void Якорные_надписи_не_аллоцируют()
+        {
+            FillCorners();
+
+            Assert.That(FillCorners, Is.Not.AllocatingGCMemory());
+        }
+
+        static void FillTable()
+        {
+            var t = Gizmo.Table(GizmoAnchor.TopRight);
+            t.Columns(GizmoTextAlign.Left, GizmoTextAlign.Right);
+            t.Title("player");
+
+            for (int i = 0; i < 50; i++)
+            {
+                t.Row("hp", i * 1.5f, "F1");
+                t.Row("ammo", i);
+                t.Row("grounded", i % 2 == 0);
+            }
+
+            t.Separator();
+            t.Row("velocity", Vector3.one, "F2");
+
+            GizmoHud.Flush();
+        }
+
+        static void FillCorners()
+        {
+            for (int i = 0; i < 50; i++)
+            {
+                Gizmo.DrawScreenText("состояние", GizmoCorner.TopLeft);
+                Gizmo.DrawScreenText("по центру", GizmoAnchor.Center);
+            }
+
+            GizmoHud.Flush();
+        }
     }
 }

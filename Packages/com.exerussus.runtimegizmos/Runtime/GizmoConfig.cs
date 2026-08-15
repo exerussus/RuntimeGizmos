@@ -56,6 +56,25 @@ namespace RuntimeGizmos
         /// </summary>
         public float ScreenSafeArea;
 
+        /// <summary>
+        /// Просвет между колонками экранной таблицы, в ширинах символа.
+        /// Шрифт моноширинный, поэтому мерить в символах нагляднее, чем в пикселях:
+        /// значение не придётся править вслед за кеглем.
+        /// </summary>
+        public float HudColumnGap;
+
+        /// <summary>
+        /// Потолок ячеек экранной раскладки на кадр. Ячейка — это одно значение в строке
+        /// таблицы; угловая надпись тоже ячейка. Буферы выделяются один раз под этот размер.
+        /// </summary>
+        public int HudMaxCells;
+
+        /// <summary>
+        /// Потолок арены символов экранной раскладки, в char. Сюда копируется текст всех
+        /// ячеек кадра, включая отформатированные числа.
+        /// </summary>
+        public int HudMaxChars;
+
         /// <summary>Зажать в допустимые диапазоны, чтобы кривой ассет не ронял отрисовку.</summary>
         public void Sanitize()
         {
@@ -69,6 +88,9 @@ namespace RuntimeGizmos
             SphereSegments        = Mathf.Clamp(SphereSegments, 4, 128);
             EditorStaleTimeout    = Mathf.Max(0f, EditorStaleTimeout);
             ScreenSafeArea        = Mathf.Max(0f, ScreenSafeArea);
+            HudColumnGap          = Mathf.Clamp(HudColumnGap, 0f, 16f);
+            HudMaxCells           = Mathf.Clamp(HudMaxCells, 16, 1 << 16);
+            HudMaxChars           = Mathf.Clamp(HudMaxChars, 64, 1 << 20);
         }
 
         /// <summary>Дефолты под платформу.</summary>
@@ -85,6 +107,9 @@ namespace RuntimeGizmos
                 EditorStaleTimeout = 0.35f,
                 EditorAutoRepaint  = true,
                 ScreenSafeArea     = 12f,
+                HudColumnGap       = 1f,
+                HudMaxCells        = 512,
+                HudMaxChars        = 8192,
             };
 
             switch (platform)

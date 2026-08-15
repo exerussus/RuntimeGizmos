@@ -249,6 +249,7 @@ namespace RuntimeGizmos.Internal
             GizmoIndexPool.Dispose();
             GizmoPrimitives.Dispose();
             GizmoFont.Dispose();
+            GizmoHud.Dispose();
             GizmoWireMeshCache.Dispose();
         }
 
@@ -285,7 +286,17 @@ namespace RuntimeGizmos.Internal
 
         internal static void BeginFrame(bool strict)
         {
-            if (!_ready) return;
+            if (!_ready)
+            {
+                // Рендерера ещё нет, но Draw* уже могли накопить экранных блоков:
+                // без сброса они дожили бы до следующего кадра и удвоились.
+                GizmoHud.Reset();
+                return;
+            }
+
+            // Экранная раскладка выпускается ДО обмена буферов: иначе всё, что она нарисует,
+            // уедет во Front только на следующей границе кадра и опоздает ровно на кадр.
+            GizmoHud.Flush();
 
             // Истечение считаем по ТОМУ ЖЕ времени, которым штамповались команды этого кадра.
             //
@@ -331,7 +342,6 @@ namespace RuntimeGizmos.Internal
                 _meshFront.Clear();
             }
 
-            ResetCorners();
             DashRun = 0f;
             HasProducedData = false;
 
@@ -564,10 +574,10 @@ namespace RuntimeGizmos.Internal
         /// true — размер в мировых единицах, метка уменьшается с расстоянием.
         /// </param>
         /// <param name="mode">0 — пиксели от мирового якоря, 1 — мировые единицы, 2 — пиксели экрана.</param>
-        internal static unsafe void Text(string text, Vector3 anchor, float size, Vector2 offset,
+        internal static unsafe void Text(ReadOnlySpan<char> text, Vector3 anchor, float size, Vector2 offset,
                                          float align, int mode = 0)
         {
-            if (string.IsNullOrEmpty(text) || size <= 0f) return;
+            if (text.IsEmpty || size <= 0f) return;
             if (!Begin()) return;
 
             GizmoFont.Ensure();
@@ -596,8 +606,8 @@ namespace RuntimeGizmos.Internal
 
             for (int li = 0; li < lines; li++)
             {
-                int nl = text.IndexOf('\n', start);
-                int stop = nl < 0 ? text.Length : nl;
+                int nl = text.Slice(start).IndexOf('\n');
+                int stop = nl < 0 ? text.Length : start + nl;
                 int len = stop - start;
                 if (len > 0 && text[stop - 1] == '\r') len--;
 
@@ -637,7 +647,7 @@ namespace RuntimeGizmos.Internal
                 }
 
                 if (nl < 0) break;
-                start = nl + 1;
+                start = stop + 1;
             }
 
             if (mode != 2) buf.Encapsulate(anchor);
@@ -687,45 +697,17 @@ namespace RuntimeGizmos.Internal
             }
         }
 
-        static readonly int[] _cornerLines = new int[4];
-
-        internal static void ResetCorners() { for (int i = 0; i < 4; i++) _cornerLines[i] = 0; }
-
-        internal static void CornerText(string text, GizmoCorner corner, float size)
-        {
-            if (string.IsNullOrEmpty(text)) return;
-
-            int idx = (int)corner;
-            GizmoFont.Measure(text, out int lines, out _);
-
-            float scale = size / GizmoFont.CapHeight;
-            float step = GizmoFont.LineStep * scale;
-            float used = _cornerLines[idx] * step;
-            _cornerLines[idx] += lines;
-
-            bool right = corner == GizmoCorner.TopRight || corner == GizmoCorner.BottomRight;
-            bool bottom = corner == GizmoCorner.BottomLeft || corner == GizmoCorner.BottomRight;
-
-            // Безопасная зона считается до КРАЯ ЧЕРНИЛ, а не до якоря строки.
-            //
-            // Якорь — вертикальный центр блока, и раньше отступ отмерялся от него: у верхних
-            // надписей за экран уезжала вся высота заглавной (это ровно size пикселей),
-            // у нижних — выносные элементы (Baseline * scale). Визуально текст лип к краю
-            // и обрезался, хотя формально «отступ» был.
-            float pad = Mathf.Max(0f, GizmoSettings.ScreenSafeArea);
-            float halfBlock = (lines - 1) * step * 0.5f;
-            float capTop = GizmoFont.CapHeight * scale;      // от якоря вверх до верха заглавной
-            float descender = GizmoFont.Baseline * scale;    // от якоря вниз до низа выносного
-            float halfStroke = Mathf.Max(1f, Width) * 0.5f;  // штрих рисуется капсулой, шире отрезка
-
-            float x = right ? Screen.width - pad - halfStroke : pad + halfStroke;
-            float y = bottom
-                ? Screen.height - pad - used - halfBlock - descender
-                : pad + used + halfBlock + capTop;
-
-            Text(text, new Vector3(x, y, 0f), size, Vector2.zero,
-                 right ? 1f : 0f, 2);
-        }
+        /// <summary>
+        /// Угловая надпись. Всё, что раньше считалось здесь, переехало в GizmoHud:
+        /// угол стал частным случаем якоря, а сама надпись — неявной таблицей в одну колонку.
+        ///
+        /// Двух независимых механизмов раскладки экранного текста в пакете быть не должно —
+        /// иначе таблица и угловая надпись на одном углу ничего не знают друг о друге
+        /// и наезжают. Заодно ушла привязка к Screen.width/height: край экрана теперь
+        /// вычисляет шейдер по размеру таргета текущей камеры.
+        /// </summary>
+        internal static void CornerText(string text, GizmoCorner corner, float size) =>
+            GizmoHud.AnchoredLine(text, GizmoAnchorUtil.FromCorner(corner), size);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static unsafe void SetText(GizmoTextVertex* v, in Vector3 anchor, in Color32 c,

@@ -168,6 +168,18 @@ namespace RuntimeGizmos
             public static float? ScreenSafeArea { get => _ScreenSafeArea; set { _ScreenSafeArea = value; Invalidate(); } }
             static float? _ScreenSafeArea;
 
+            /// <summary>Просвет между колонками экранной таблицы, в ширинах символа.</summary>
+            public static float? HudColumnGap { get => _HudColumnGap; set { _HudColumnGap = value; Invalidate(); } }
+            static float? _HudColumnGap;
+
+            /// <summary>Потолок ячеек экранной раскладки на кадр.</summary>
+            public static int? HudMaxCells { get => _HudMaxCells; set { _HudMaxCells = value; Invalidate(); } }
+            static int? _HudMaxCells;
+
+            /// <summary>Потолок арены символов экранной раскладки, в char.</summary>
+            public static int? HudMaxChars { get => _HudMaxChars; set { _HudMaxChars = value; Invalidate(); } }
+            static int? _HudMaxChars;
+
             /// <summary>Снять все оверрайды и вернуться к ассету и дефолтам.</summary>
             public static void Clear()
             {
@@ -186,6 +198,9 @@ namespace RuntimeGizmos
                 _EditorStaleTimeout = null;
                 _EditorAutoRepaint = null;
                 _ScreenSafeArea = null;
+                _HudColumnGap = null;
+                _HudMaxCells = null;
+                _HudMaxChars = null;
                 Invalidate();
             }
 
@@ -206,6 +221,9 @@ namespace RuntimeGizmos
                 if (_EditorStaleTimeout.HasValue) c.EditorStaleTimeout = _EditorStaleTimeout.Value;
                 if (_EditorAutoRepaint.HasValue) c.EditorAutoRepaint = _EditorAutoRepaint.Value;
                 if (_ScreenSafeArea.HasValue) c.ScreenSafeArea = _ScreenSafeArea.Value;
+                if (_HudColumnGap.HasValue) c.HudColumnGap = _HudColumnGap.Value;
+                if (_HudMaxCells.HasValue) c.HudMaxCells = _HudMaxCells.Value;
+                if (_HudMaxChars.HasValue) c.HudMaxChars = _HudMaxChars.Value;
             }
         }
 
@@ -255,6 +273,18 @@ namespace RuntimeGizmos
         /// Считается до края чернил, а не до якоря строки.
         /// </summary>
         public static float ScreenSafeArea { get => Current.ScreenSafeArea; set => Overrides.ScreenSafeArea = value; }
+
+        /// <summary>Просвет между колонками экранной таблицы, в ширинах символа.</summary>
+        public static float HudColumnGap { get => Current.HudColumnGap; set => Overrides.HudColumnGap = value; }
+
+        /// <summary>
+        /// Потолок ячеек экранной раскладки на кадр. Читается один раз при первом
+        /// обращении к раскладке в сессии: буферы под него уже выделены.
+        /// </summary>
+        public static int HudMaxCells { get => Current.HudMaxCells; set => Overrides.HudMaxCells = value; }
+
+        /// <summary>Потолок арены символов экранной раскладки, в char.</summary>
+        public static int HudMaxChars { get => Current.HudMaxChars; set => Overrides.HudMaxChars = value; }
 
         /// <summary>Потолок роста вершинного буфера на канал. 0 — без ограничения.</summary>
         public static int MaxVerticesPerChannel { get => Current.MaxVerticesPerChannel; set => Overrides.MaxVerticesPerChannel = value; }

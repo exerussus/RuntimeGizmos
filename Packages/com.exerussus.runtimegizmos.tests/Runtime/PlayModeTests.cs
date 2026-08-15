@@ -272,6 +272,90 @@ namespace RuntimeGizmos.Tests
             }
         }
 
+        /// <summary>
+        /// Тот самый баг, ради которого якорь уехал в шейдер.
+        ///
+        /// Раньше правый и нижний края отмерялись на CPU через Screen.width/height, а шейдер
+        /// переводил пиксели в NDC по _ScreenParams — то есть по размеру РЕАЛЬНОГО таргета.
+        /// На главном экране числа совпадали и расхождение не проявлялось; в RenderTexture
+        /// другого размера надпись уезжала за кадр. Поэтому проверять нужно именно на двух
+        /// разных размерах: на одном тест прошёл бы и со старой реализацией.
+        ///
+        /// Офлайн-харнесс сюда не дотянется: там шейдер — заглушка.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Экранный_якорь_считается_по_размеру_таргета()
+        {
+            if (GraphicsSettings.currentRenderPipeline == null)
+                Assert.Ignore("отрисовка проверяется только на URP — назначьте Render Pipeline Asset");
+
+            yield return AnchoredInkLandsInCorner(160, 160);
+            yield return AnchoredInkLandsInCorner(320, 192);
+        }
+
+        IEnumerator AnchoredInkLandsInCorner(int width, int height)
+        {
+            Boot();
+
+            var rt = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32);
+            var cam = MakeCamera();
+            var tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
+
+            try
+            {
+                cam.targetTexture = rt;
+
+                Gizmo.color = Color.red;
+                var table = Gizmo.Table(GizmoAnchor.BottomRight, 24f);
+                table.Row("ЦЦЦЦ");
+                table.Row("ЦЦЦЦ");
+
+                yield return null;          // граница кадра разложит блок и переложит его во front
+                cam.Render();
+
+                var prev = RenderTexture.active;
+                RenderTexture.active = rt;
+                tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                tex.Apply();
+                RenderTexture.active = prev;
+
+                // Проверяется не «попало в четверть» — блок шире четверти, — а то, что
+                // край чернил стоит у края ТАРГЕТА, на расстоянии безопасной зоны.
+                // Со старой реализацией на CPU этого не случилось бы ни при каком размере,
+                // кроме совпадающего с Screen: блок либо сдвинулся бы, либо уехал за кадр.
+                //
+                // ReadPixels отдаёт снизу вверх, поэтому нижний край экрана — это y = 0.
+                var px = tex.GetPixels32();
+                int lit = 0, maxX = -1, minY = int.MaxValue;
+
+                for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    if (px[y * width + x].r <= 60) continue;
+                    lit++;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                }
+
+                Assert.Greater(lit, 0, $"в таргете {width}×{height} не нарисовано ничего");
+
+                // Безопасная зона — 12 px по умолчанию; допуск на сглаживание и полтолщины штриха.
+                Assert.GreaterOrEqual(maxX, width - 24,
+                    $"правый край чернил в {width}×{height} стоит на {width - 1 - maxX} px от края, а не на 12");
+                Assert.LessOrEqual(minY, 24,
+                    $"нижний край чернил в {width}×{height} стоит на {minY} px от края, а не на 12");
+            }
+            finally
+            {
+                cam.targetTexture = null;
+                Object.Destroy(cam.gameObject);
+                Object.Destroy(tex);
+                rt.Release();
+                Object.Destroy(rt);
+                Gizmo.Reset();
+            }
+        }
+
         static Camera MakeCamera()
         {
             var go = new GameObject("~GizmoTestCamera");

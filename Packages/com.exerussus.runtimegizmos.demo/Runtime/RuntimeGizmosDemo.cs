@@ -24,6 +24,7 @@ namespace RuntimeGizmosDemo
             ТолщинаЛиний,
             ТестГлубины,
             Текст,
+            ЭкранныеТаблицы,
             Длительность,
             МатрицаИScope,
             МешиИИконки,
@@ -95,6 +96,7 @@ namespace RuntimeGizmosDemo
                 case Section.ТолщинаЛиний:   Widths(o); break;
                 case Section.ТестГлубины:    Depth(o); break;
                 case Section.Текст:          Text(o); break;
+                case Section.ЭкранныеТаблицы: Tables(); break;
                 case Section.Длительность:   Duration(o); break;
                 case Section.МатрицаИScope:  Matrices(o); break;
                 case Section.МешиИИконки:    Meshes(o); break;
@@ -267,6 +269,60 @@ namespace RuntimeGizmosDemo
                 Gizmo.lineWidth = i;
                 Gizmo.DrawText("штрих " + i + " px", o + new Vector3(-5f, 1f - i * 0.6f, 0f), 18f);
             }
+        }
+
+        /// <summary>
+        /// Экранная раскладка. Мировой позиции здесь нет вовсе — всё привязано к якорям,
+        /// поэтому и параметра o у метода нет.
+        /// </summary>
+        void Tables()
+        {
+            Gizmo.lineWidth = 1f;
+
+            // Автоширина: во второй колонке значения разной длины, но правый край у них
+            // общий, а левый край колонки стоит по самой длинной метке первой колонки.
+            Gizmo.color = Color.white;
+            var stats = Gizmo.Table(GizmoAnchor.TopRight);
+            stats.Columns(GizmoTextAlign.Left, GizmoTextAlign.Right);
+            stats.Title("автоширина колонок");
+            stats.Row("кадр", Time.frameCount);
+            stats.Row("время", Time.realtimeSinceStartup, "F2");
+            stats.Row("очень длинная метка", 7f, "F3");
+            stats.Separator();
+            stats.Row("позиция", transform.position, "F1");
+
+            // Общий курсор: надпись, таблица и снова надпись на ОДНОМ якоре обязаны
+            // встать стопкой в порядке вызова и не наехать друг на друга.
+            Gizmo.color = new Color(1f, 0.85f, 0.4f);
+            Gizmo.DrawScreenText("надпись до таблицы", GizmoAnchor.TopLeft);
+
+            Gizmo.color = Color.white;
+            var shared = Gizmo.Table(GizmoAnchor.TopLeft, 12f);
+            shared.Columns(GizmoTextAlign.Left, GizmoTextAlign.Right);
+            shared.Row("таблица", "между надписями");
+            shared.Row("курсор", "общий");
+
+            Gizmo.color = new Color(1f, 0.85f, 0.4f);
+            Gizmo.DrawScreenText("надпись после таблицы", GizmoAnchor.TopLeft);
+
+            // Все девять якорей разом: середины сторон и центр — то, чего у GizmoCorner нет.
+            Gizmo.color = new Color(0.55f, 0.85f, 1f);
+            foreach (GizmoAnchor a in System.Enum.GetValues(typeof(GizmoAnchor)))
+            {
+                if (a == GizmoAnchor.TopLeft || a == GizmoAnchor.TopRight) continue;  // заняты выше
+
+                var mark = Gizmo.Table(a, 12f);
+                mark.Row(a.ToString());
+            }
+
+            // Выравнивание по колонкам: три колонки, три разных выравнивания.
+            Gizmo.color = Color.white;
+            var align = Gizmo.Table(GizmoAnchor.BottomLeft, 12f);
+            align.Columns(GizmoTextAlign.Left, GizmoTextAlign.Center, GizmoTextAlign.Right);
+            align.Title("выравнивание колонок");
+            align.Row("влево", "центр", "вправо");
+            align.Row("к", "по", "к");
+            align.Row("левому краю", "середине колонки", "правому краю");
         }
 
         void Duration(Vector3 o)
@@ -623,6 +679,8 @@ namespace RuntimeGizmosDemo
                     return "Зелёная сфера уходит за куб, красная — рисуется поверх. Жёлтые линии лежат на самой поверхности куба: мерцание = z-файтинг, поднимай GizmoSettings.DepthBias.";
                 case Section.Текст:
                     return "Латиница, кириллица, цифры, знаки. Слева многострочный блок, в углах экрана — DrawScreenText стопкой. Выносные элементы у g j p q y и у д ц щ у ф. Неизвестный символ обязан дать пустой квадрат.\nСправа два ряда вглубь: белый (пиксели) не меняет размер, зелёный (DrawTextWorld) уменьшается. Отъедь камерой и сравни.";
+                case Section.ЭкранныеТаблицы:
+                    return "Справа сверху — автоширина: у второй колонки общий правый край, а сама колонка стоит по самой длинной метке первой.\nСлева сверху проверяется общий курсор: надпись, таблица, надпись — обязаны идти стопкой в этом порядке и не наезжать.\nПо краям и в центре подписаны все девять якорей. Растяни окно Game и смени его пропорции: у средних якорей блок обязан остаться по центру стороны, у угловых — на том же отступе от края.\nОтдельно проверь рендер в RenderTexture другого размера: край экрана считает шейдер по таргету камеры, а не по Screen.";
                 case Section.Длительность:
                     return "Розовый след живёт 2 секунды. Кнопка ставит метку на 3 секунды. Поставь Time.timeScale = 0 — след обязан продолжать жить и исчезать.";
                 case Section.МатрицаИScope:

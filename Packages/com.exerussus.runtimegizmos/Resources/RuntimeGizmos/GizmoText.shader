@@ -54,7 +54,9 @@ Shader "Hidden/RuntimeGizmos/Text"
 
             struct Attributes
             {
-                float4 positionOS : POSITION;   // мировой якорь строки
+                // Мировой якорь строки. В экранном режиме — xy пиксели от точки привязки,
+                // z сама точка привязки (индекс 0..8, см. GizmoAnchor).
+                float4 positionOS : POSITION;
                 half4  color      : COLOR;
                 float2 offset     : TEXCOORD0;  // смещение этого конца, пиксели
                 float2 other      : TEXCOORD1;  // смещение другого конца, пиксели
@@ -111,8 +113,24 @@ Shader "Hidden/RuntimeGizmos/Text"
 
                 if (screenSpace)
                 {
-                    // Якорь задан в пикселях экрана, начало в левом верхнем углу.
-                    float2 px = float2(IN.positionOS.x + p.x, IN.positionOS.y - p.y);
+                    // Якорь задан в пикселях, начало отсчёта — точка привязки из z.
+                    //
+                    // Индекс 0..8 раскладывается как ax = idx % 3, ay = idx / 3, и начало
+                    // блока получается (ax * 0.5 * ширина, ay * 0.5 * высота). Ноль при этом
+                    // остаётся левым верхним углом, поэтому вершины без якоря (обычный
+                    // DrawScreenText с позицией в пикселях) считаются ровно как раньше.
+                    //
+                    // Считается это ЗДЕСЬ, а не на CPU, потому что _ScreenParams — размер
+                    // реального таргета текущей камеры. Раньше правый и нижний края брались
+                    // из Screen.width/height, и рендер в RenderTexture другого размера уводил
+                    // надписи за кадр. Теперь один меш корректен для всех камер кадра.
+                    float ai = max(IN.positionOS.z, 0.0);
+                    float ay = floor(ai / 3.0);
+                    float ax = ai - ay * 3.0;
+                    float2 origin = float2(ax * 0.5 * max(_ScreenParams.x, 1.0),
+                                           ay * 0.5 * max(_ScreenParams.y, 1.0));
+
+                    float2 px = origin + float2(IN.positionOS.x + p.x, IN.positionOS.y - p.y);
                     float2 ndc;
                     ndc.x = px.x / max(_ScreenParams.x, 1.0) * 2.0 - 1.0;
                     ndc.y = 1.0 - px.y / max(_ScreenParams.y, 1.0) * 2.0;

@@ -1527,25 +1527,244 @@ public static class Tests
             float mode; unsafe { mode = txt[0].Target(false).Ptr[0].Params.z; }
             Check("X18 экранный текст помечен режимом 2", Math.Abs(mode - 2f) < 1e-5f, "" + mode);
 
+            // Угловые надписи с 1.4.0 не выпускают вершины сразу: раскладка откладывается
+            // до границы кадра, потому что ширину колонок таблицы иначе не измерить.
+            // Поэтому здесь между набором и проверкой стоит явный Flush.
             txt[0].Clear();
-            GizmoRenderer.ResetCorners();
             Gizmo.DrawScreenText("одна", GizmoCorner.TopLeft);
-            float y1; unsafe { y1 = txt[0].Target(false).Ptr[0].Position.y; }
+            GizmoHud.Flush();
             int after1 = TV();
+            float y1; unsafe { y1 = txt[0].Target(false).Ptr[0].Position.y; }
+
+            txt[0].Clear();
+            Gizmo.DrawScreenText("одна", GizmoCorner.TopLeft);
             Gizmo.DrawScreenText("две", GizmoCorner.TopLeft);
+            GizmoHud.Flush();
             float y2; unsafe { y2 = txt[0].Target(false).Ptr[after1].Position.y; }
             Check("X19 угловой текст укладывается стопкой", y2 > y1, y1 + " → " + y2);
 
-            GizmoRenderer.ResetCorners();
-            txt[0].Clear(); Gizmo.DrawScreenText("снова", GizmoCorner.TopLeft);
+            txt[0].Clear();
+            Gizmo.DrawScreenText("снова", GizmoCorner.TopLeft);
+            GizmoHud.Flush();
             float y3; unsafe { y3 = txt[0].Target(false).Ptr[0].Position.y; }
             Check("X20 счётчик углов сбрасывается на кадре", Math.Abs(y3 - y1) < 1e-4f, y1 + " / " + y3);
+
+            txt[0].Clear();
+            Gizmo.DrawScreenText("верх", GizmoCorner.TopLeft);
+            GizmoHud.Flush();
+            float yTop; unsafe { yTop = txt[0].Target(false).Ptr[0].Position.y; }
+            float aTop; unsafe { aTop = txt[0].Target(false).Ptr[0].Position.z; }
+
+            txt[0].Clear();
+            Gizmo.DrawScreenText("низ", GizmoCorner.BottomRight);
+            GizmoHud.Flush();
+            float yBottom; unsafe { yBottom = txt[0].Target(false).Ptr[0].Position.y; }
+            float aBottom; unsafe { aBottom = txt[0].Target(false).Ptr[0].Position.z; }
+
+            // Край экрана больше не подставляется на CPU: у верхнего якоря смещение
+            // положительное и вниз, у нижнего — отрицательное и вверх, а сам край
+            // выбирает шейдер по индексу якоря в z.
+            Check("X19a верхний угол — индекс якоря 0", Math.Abs(aTop) < 1e-5f, "" + aTop);
+            Check("X19b нижний правый — индекс якоря 8", Math.Abs(aBottom - 8f) < 1e-5f, "" + aBottom);
+            Check("X19c смещения отмеряются от якоря, а не от Screen",
+                  yTop > 0f && yBottom < 0f, yTop + " / " + yBottom);
 
             Throws("X21 все четыре угла", () =>
             {
                 foreach (GizmoCorner c in System.Enum.GetValues(typeof(GizmoCorner)))
                     Gizmo.DrawScreenText("угол\nдве строки", c);
+                GizmoHud.Flush();
             }, false);
+
+            // --- экранные таблицы
+            txt[0].Clear();
+            {
+                var tbl = Gizmo.Table(GizmoAnchor.TopRight);
+                tbl.Columns(GizmoTextAlign.Left, GizmoTextAlign.Right);
+                tbl.Row("hp", 100f, "F0");
+                tbl.Row("ammo", 24);
+                GizmoHud.Flush();
+            }
+            Check("X21a таблица рисует обе строки", TV() > 0, "" + TV());
+
+            // Все вершины одной ячейки несут один и тот же якорь, поэтому число различных
+            // Position.x — это ровно число колонок, а различных Position.y — число блоков.
+            // Считать так надёжнее, чем по индексам вершин: сегментов у глифов разное число.
+            int DistinctX(out float rightmost)
+            {
+                var b = txt[0].Target(false);
+                int n = 0; rightmost = float.MinValue;
+                unsafe
+                {
+                    for (int i = 0; i < b.Count; i++)
+                    {
+                        float x = b.Ptr[i].Position.x;
+                        bool seen = false;
+                        for (int j = 0; j < i; j++)
+                            if (Math.Abs(b.Ptr[j].Position.x - x) < 1e-4f) { seen = true; break; }
+                        if (seen) continue;
+                        n++;
+                        if (x > rightmost) rightmost = x;
+                    }
+                }
+                return n;
+            }
+
+            // Блоки выпускаются в порядке создания, поэтому смена y — это переход к следующей
+            // строке, и заодно проверяется, что порядок на экране совпал с порядком вызовов.
+            int Bands(out bool ascending)
+            {
+                var b = txt[0].Target(false);
+                int n = 0; float prev = 0f; ascending = true;
+                unsafe
+                {
+                    for (int i = 0; i < b.Count; i++)
+                    {
+                        float y = b.Ptr[i].Position.y;
+                        if (i == 0) { n = 1; prev = y; continue; }
+                        if (Math.Abs(y - prev) < 1e-4f) continue;
+                        if (y < prev) ascending = false;
+                        n++; prev = y;
+                    }
+                }
+                return n;
+            }
+
+            // --- автоширина колонок
+            txt[0].Clear();
+            {
+                var narrowTable = Gizmo.Table(GizmoAnchor.TopLeft);
+                narrowTable.Columns(GizmoTextAlign.Left, GizmoTextAlign.Left);
+                narrowTable.Row("a", "|");
+                narrowTable.Row("a", "|");
+                GizmoHud.Flush();
+            }
+            int colsNarrow = DistinctX(out float secondNarrow);
+
+            txt[0].Clear();
+            {
+                // Имя с суффиксом намеренно: wide в этом методе уже занят каналом толстых линий.
+                var wideTable = Gizmo.Table(GizmoAnchor.TopLeft);
+                wideTable.Columns(GizmoTextAlign.Left, GizmoTextAlign.Left);
+                wideTable.Row("a", "|");
+                wideTable.Row("bbbb", "|");
+                GizmoHud.Flush();
+            }
+            int colsWide = DistinctX(out float secondWide);
+
+            Check("X21e колонка общая для всех строк", colsNarrow == 2 && colsWide == 2,
+                  colsNarrow + " / " + colsWide);
+            Check("X21f колонка растёт по самой широкой ячейке", secondWide > secondNarrow + 1f,
+                  secondNarrow + " → " + secondWide);
+
+            // --- общий курсор с угловыми надписями
+            txt[0].Clear();
+            Gizmo.DrawScreenText("первая", GizmoCorner.TopLeft);
+            {
+                var between = Gizmo.Table(GizmoAnchor.TopLeft);
+                between.Row("вторая");
+            }
+            Gizmo.DrawScreenText("третья", GizmoCorner.TopLeft);
+            GizmoHud.Flush();
+            int bands = Bands(out bool ascending);
+            Check("X21g таблица и угловой текст делят курсор", bands == 3 && ascending,
+                  bands + " полос, по порядку: " + ascending);
+
+            // --- средние якоря центрируют стопку
+            //
+            // «Ц» выбрана намеренно: её глиф занимает всю высоту строки, от выносного
+            // элемента до верха заглавной. У строчных букв чернила до краёв не достают,
+            // и симметрия проверялась бы не там, где её обеспечивает раскладка.
+            txt[0].Clear();
+            {
+                var mid = Gizmo.Table(GizmoAnchor.Center);
+                mid.Row("Ц");
+                mid.Row("Ц");
+                GizmoHud.Flush();
+            }
+            float inkTop = float.MaxValue, inkBottom = float.MinValue, midAnchor = -1f;
+            unsafe
+            {
+                var b = txt[0].Target(false);
+                if (b.Count > 0) midAnchor = b.Ptr[0].Position.z;
+                for (int i = 0; i < b.Count; i++)
+                {
+                    // Шейдер считает пиксель как Position.y - смещение: оно отмеряется
+                    // вверх, а якорь — вниз.
+                    //
+                    // Смотреть надо ОБА конца отрезка. Вершина несёт Offset (p0) и Other (p1),
+                    // и у «Ц» нижняя точка выносного штриха лежит именно в Other: сегмент
+                    // идёт из (4,2) в (4,0). По одному Offset нижняя граница чернил
+                    // недосчитывается ровно на выносной элемент.
+                    float anchorY = b.Ptr[i].Position.y;
+                    float p0 = anchorY - b.Ptr[i].Offset.y;
+                    float p1 = anchorY - b.Ptr[i].Other.y;
+
+                    if (p0 < inkTop) inkTop = p0;
+                    if (p1 < inkTop) inkTop = p1;
+                    if (p0 > inkBottom) inkBottom = p0;
+                    if (p1 > inkBottom) inkBottom = p1;
+                }
+            }
+            Check("X21h центр — якорь 4", Math.Abs(midAnchor - 4f) < 1e-5f, "" + midAnchor);
+            Check("X21i средний якорь центрирует стопку", Math.Abs(inkTop + inkBottom) < 0.01f,
+                  inkTop + " / " + inkBottom);
+
+            // --- протухший хендл
+            {
+                var old = Gizmo.Table(GizmoAnchor.TopLeft);
+                old.Row("старая");
+                GizmoHud.Flush();               // штамп сдвинулся, индекс освободился
+
+                txt[0].Clear();
+                var fresh = Gizmo.Table(GizmoAnchor.TopLeft);   // займёт тот же индекс
+                fresh.Row("новая");
+                old.Row("чужая");                                // обязана уйти в никуда
+                GizmoHud.Flush();
+            }
+            int afterStale = Bands(out _);
+            Check("X21j протухший хендл не дописывает в чужую таблицу", afterStale == 1,
+                  "" + afterStale);
+
+            var stale = Gizmo.Table(GizmoAnchor.Top);
+            Check("X21k хендл валиден в своём кадре", stale.IsValid);
+            GizmoHud.Flush();
+            Check("X21l хендл протухает на следующем кадре", !stale.IsValid);
+
+            Throws("X21m краевые случаи таблиц", () =>
+            {
+                var t1 = Gizmo.Table(GizmoAnchor.Center, 0f);
+                t1.Row("нулевой кегль");
+
+                var t2 = Gizmo.Table(GizmoAnchor.Bottom);
+                t2.Columns(GizmoTextAlign.Left, GizmoTextAlign.Center, GizmoTextAlign.Right);
+                t2.Title("заголовок");
+                t2.Separator();
+                t2.Row("", "", "");
+                t2.Row("больше ячеек", "чем", "колонок", "лишняя");
+                t2.Row("вектор", Vector3.one, "F2");
+                t2.Row("флаг", true);
+
+                default(GizmoTable).Row("невалидный хендл");
+                GizmoHud.Flush();
+            }, false);
+
+            // Переполнение обязано ронять лишнее, а не падать и не портить соседние буферы.
+            // Стоит последним среди табличных: оно взводит однократное предупреждение.
+            Throws("X21n переполнение раскладки не роняет", () =>
+            {
+                var flood = Gizmo.Table(GizmoAnchor.TopLeft);
+                for (int i = 0; i < GizmoSettings.HudMaxCells + 64; i++) flood.Row("строка");
+                GizmoHud.Flush();
+            }, false);
+
+            txt[0].Clear();
+            {
+                var after = Gizmo.Table(GizmoAnchor.TopLeft);
+                after.Row("после переполнения");
+                GizmoHud.Flush();
+            }
+            Check("X21o после переполнения раскладка продолжает работать", TV() > 0, "" + TV());
 
             // --- кривые и сетка
             thin[0].Clear(); Gizmo.DrawTrajectory(Vector3.zero, Vector3.up * 5f, 2f, 10);

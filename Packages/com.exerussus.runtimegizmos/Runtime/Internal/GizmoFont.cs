@@ -1,3 +1,4 @@
+using System;
 using System.Runtime.CompilerServices;
 using Unity.Collections;
 using UnityEngine;
@@ -380,23 +381,29 @@ namespace RuntimeGizmos.Internal
         public static float LineWidth(int count) => count <= 0 ? 0f : count * Advance - 1.5f;
 
         /// <summary>Ширина текста в единицах сетки. Многострочный — по самой длинной строке.</summary>
-        public static float Width(string text)
+        public static float Width(ReadOnlySpan<char> text)
         {
             Measure(text, out _, out float w);
             return w;
         }
 
-        /// <summary>Число строк и ширина самой длинной, в единицах сетки.</summary>
-        public static void Measure(string text, out int lines, out float maxWidth)
+        /// <summary>
+        /// Число строк и ширина самой длинной, в единицах сетки.
+        ///
+        /// Принимает span, а не string: экранная раскладка держит ячейки в общей арене
+        /// char[] и меряет их срезами, без промежуточных строк. Для вызывающего кода
+        /// ничего не изменилось — string приводится к ReadOnlySpan&lt;char&gt; неявно.
+        /// </summary>
+        public static void Measure(ReadOnlySpan<char> text, out int lines, out float maxWidth)
         {
             lines = 0; maxWidth = 0f;
-            if (string.IsNullOrEmpty(text)) return;
+            if (text.IsEmpty) return;
 
             int start = 0;
             while (true)
             {
-                int end = text.IndexOf('\n', start);
-                int stop = end < 0 ? text.Length : end;
+                int rel = text.Slice(start).IndexOf('\n');
+                int stop = rel < 0 ? text.Length : start + rel;
 
                 int len = stop - start;
                 if (len > 0 && text[stop - 1] == '\r') len--;   // CRLF
@@ -405,8 +412,8 @@ namespace RuntimeGizmos.Internal
                 float w = LineWidth(len);
                 if (w > maxWidth) maxWidth = w;
 
-                if (end < 0) return;
-                start = end + 1;
+                if (rel < 0) return;
+                start = stop + 1;
             }
         }
 
