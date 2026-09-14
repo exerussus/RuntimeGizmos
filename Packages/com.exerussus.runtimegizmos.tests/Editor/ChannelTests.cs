@@ -95,8 +95,13 @@ namespace RuntimeGizmos.Tests
 
             GizmoTestHarness.At(600f); GizmoTestHarness.Frame(strict: false);
             GizmoTestHarness.At(601f); GizmoTestHarness.Frame(strict: false);
+            Assert.IsTrue(GizmoTestHarness.Thin[0].Prepare(out _, out _),
+                          "разрыв в стенных часах — это пауза редактора, а не молчание продюсера");
+
+            GizmoTestHarness.IdleEditor(1f);
+            GizmoTestHarness.Frame(strict: false);
             Assert.IsFalse(GizmoTestHarness.Thin[0].Prepare(out _, out _),
-                           "после таймаута снимок обязан пропасть");
+                           "после таймаута живого редактора снимок обязан пропасть");
         }
 
         [Test]

@@ -56,6 +56,14 @@ namespace RuntimeGizmos.Tests
 
         public static void Frame(bool strict = true) => GizmoRenderer.BeginFrame(strict);
 
+        /// <summary>
+        /// Простой живого редактора: двигает часы эдит-мода, по которым считается
+        /// протухание снимка геометрии. Стенное время для этого не подходит — шаг
+        /// реальных часов внутри BeginFrame зажат, чтобы пауза редактора
+        /// (переключение окна, компиляция, импорт) не гасила геометрию.
+        /// </summary>
+        public static void IdleEditor(float seconds) => GizmoRenderer.EditorClock += seconds;
+
         /// <summary>Камера, которую не видно и которая ничего не рендерит сама.</summary>
         public static Camera MakeCamera(CameraType type = CameraType.Game)
         {

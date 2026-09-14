@@ -48,6 +48,16 @@ namespace RuntimeGizmos
         public bool EditorAutoRepaint;
 
         /// <summary>
+        /// Edit Mode: пока в эдит-моде кто-то рисует, просить редактор крутить player loop.
+        ///
+        /// Без этого продюсер геометрии (Update компонента с [ExecuteAlways], код редактора)
+        /// вызывается только когда сцена «шевелится» — то есть пока курсор над Scene View.
+        /// Уводишь курсор в Game View, Inspector или другое приложение — тики прекращаются,
+        /// рисовать некому, и Game View честно показывает пустоту.
+        /// </summary>
+        public bool EditorDriveUpdate;
+
+        /// <summary>
         /// Отступ угловых надписей DrawScreenText от краёв экрана, в пикселях.
         ///
         /// Считается до КРАЯ ЧЕРНИЛ, а не до якоря строки: выносные элементы и верхушки
@@ -106,6 +116,7 @@ namespace RuntimeGizmos
                 GlobalAlpha        = 1f,
                 EditorStaleTimeout = 0.35f,
                 EditorAutoRepaint  = true,
+                EditorDriveUpdate  = true,
                 ScreenSafeArea     = 12f,
                 HudColumnGap       = 1f,
                 HudMaxCells        = 512,

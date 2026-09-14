@@ -37,7 +37,16 @@ namespace RuntimeGizmos.Internal
         bool _prepared;
         Mesh _readyMesh;
         Bounds _readyBounds;
-        float _lastDataTime;
+
+        // Часы эдит-мода на момент последних новых команд — по ним считается протухание.
+        // Почему не стенные часы, написано у GizmoRenderer.EditorClock.
+        float _lastDataClock;
+
+        // Снимок хоть раз дошёл до камеры. Пока нет — гасить его нельзя: получится
+        // геометрия, которая была нарисована, но не показана ни в одном кадре.
+        // Ровно это и видно как мигание, когда редактор встаёт на паузу между
+        // границей кадра и перерисовкой вьюпорта.
+        bool _shown;
 
         // Пропуск лишней работы на неизменной геометрии.
         //
@@ -87,7 +96,7 @@ namespace RuntimeGizmos.Internal
             return _retained;
         }
 
-        public void BeginFrame(bool strict, float now, float staleTimeout)
+        public void BeginFrame(bool strict, float now, float clock, float staleTimeout)
         {
             CompactRetained(now);
 
@@ -97,14 +106,18 @@ namespace RuntimeGizmos.Internal
                 _front = _back;
                 _back = tmp;
                 _back.Clear();
-                _lastDataTime = now;
+                _lastDataClock = clock;
+                _shown = false;
                 _dirty = true;
             }
-            else if (strict || now - _lastDataTime > staleTimeout)
+            else if (strict || (_shown && clock - _lastDataClock > staleTimeout))
             {
                 // strict (play mode): нет новых команд — значит в этом кадре ничего не рисуем.
+                //
                 // edit mode: держим последний снимок, пока он не протух, иначе будет мерцание
-                // между тиками EditorApplication.update и перерисовками вьюпорта.
+                // между тиками EditorApplication.update и перерисовками вьюпорта. Протухание
+                // мерится часами эдит-мода (GizmoRenderer.EditorClock) и только после того,
+                // как снимок хоть раз дошёл до камеры.
                 //
                 // Чистим только когда есть что чистить: иначе на статичной сцене
                 // каждый кадр взводился бы _dirty и весь смысл флага пропал бы.
@@ -193,6 +206,7 @@ namespace RuntimeGizmos.Internal
 
             mesh = _readyMesh;
             bounds = _readyBounds;
+            if (_readyMesh != null) _shown = true;
             return _readyMesh != null;
         }
 
@@ -263,6 +277,7 @@ namespace RuntimeGizmos.Internal
             _retainedExpiry.Clear();
             _prepared = false;
             _readyMesh = null;
+            _shown = false;
             _dirty = true;
             _retainedTouched = false;
             _minExpiry = float.MaxValue;

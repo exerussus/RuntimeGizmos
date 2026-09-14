@@ -242,7 +242,7 @@ namespace UnityEngine {
   public static class Application { public static bool isPlaying=false; public static RuntimePlatform platform=RuntimePlatform.WindowsPlayer;
     public static event Action quitting; static Application(){ quitting=null; } }
   public enum RuntimePlatform { OSXEditor, OSXPlayer, WindowsPlayer, WindowsEditor, IPhonePlayer, Android, LinuxPlayer, LinuxEditor, WebGLPlayer, PS4, PS5, XboxOne, GameCoreXboxOne, GameCoreXboxSeries, Switch, tvOS }
-  public static class Time { public static float realtimeSinceStartup=0f; public static float deltaTime=0.016f; public static float timeScale=1f; public static float time=0f; public static float unscaledTime=0f; }
+  public static class Time { public static int frameCount=0; public static float realtimeSinceStartup=0f; public static float deltaTime=0.016f; public static float timeScale=1f; public static float time=0f; public static float unscaledTime=0f; }
   public static class QualitySettings { public static ColorSpace activeColorSpace=ColorSpace.Linear; }
   public static class Resources { public static T Load<T>(string p) where T : Object => null; }
   public static class Screen { public static int width=>1920; public static int height=>1080; public static float dpi=>0; }
@@ -256,7 +256,8 @@ namespace UnityEngine {
       if (sub < 0 || sub >= Math.Max(1,m.subMeshCount)) throw new ArgumentOutOfRangeException("submesh="+sub+" count="+m.subMeshCount);
       Calls++; if (Record) Last.Add(m); } }
   public class ScriptableObject : Object { public static T CreateInstance<T>() where T : ScriptableObject => null; }
-  public class GUIContent { public static GUIContent none=>null; public Texture image; public string text; }
+  public class GUIContent { public GUIContent(){} public GUIContent(string t){ text=t; }
+    public static GUIContent none=>null; public Texture image; public string text; }
   [AttributeUsage(AttributeTargets.Field)] public class SerializeField : Attribute {}
   [AttributeUsage(AttributeTargets.Field)] public class HideInInspector : Attribute {}
   [AttributeUsage(AttributeTargets.Field)] public class HeaderAttribute : Attribute { public HeaderAttribute(string h){} }

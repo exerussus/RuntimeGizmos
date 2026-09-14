@@ -164,6 +164,10 @@ namespace RuntimeGizmos
             public static bool? EditorAutoRepaint { get => _EditorAutoRepaint; set { _EditorAutoRepaint = value; Invalidate(); } }
             static bool? _EditorAutoRepaint;
 
+            /// <summary>Edit Mode: пока в эдит-моде кто-то рисует, просить редактор крутить player loop.</summary>
+            public static bool? EditorDriveUpdate { get => _EditorDriveUpdate; set { _EditorDriveUpdate = value; Invalidate(); } }
+            static bool? _EditorDriveUpdate;
+
             /// <summary>Отступ угловых надписей DrawScreenText от краёв экрана, в пикселях.</summary>
             public static float? ScreenSafeArea { get => _ScreenSafeArea; set { _ScreenSafeArea = value; Invalidate(); } }
             static float? _ScreenSafeArea;
@@ -197,6 +201,7 @@ namespace RuntimeGizmos
                 _SphereSegments = null;
                 _EditorStaleTimeout = null;
                 _EditorAutoRepaint = null;
+                _EditorDriveUpdate = null;
                 _ScreenSafeArea = null;
                 _HudColumnGap = null;
                 _HudMaxCells = null;
@@ -220,6 +225,7 @@ namespace RuntimeGizmos
                 if (_SphereSegments.HasValue) c.SphereSegments = _SphereSegments.Value;
                 if (_EditorStaleTimeout.HasValue) c.EditorStaleTimeout = _EditorStaleTimeout.Value;
                 if (_EditorAutoRepaint.HasValue) c.EditorAutoRepaint = _EditorAutoRepaint.Value;
+                if (_EditorDriveUpdate.HasValue) c.EditorDriveUpdate = _EditorDriveUpdate.Value;
                 if (_ScreenSafeArea.HasValue) c.ScreenSafeArea = _ScreenSafeArea.Value;
                 if (_HudColumnGap.HasValue) c.HudColumnGap = _HudColumnGap.Value;
                 if (_HudMaxCells.HasValue) c.HudMaxCells = _HudMaxCells.Value;
@@ -303,6 +309,12 @@ namespace RuntimeGizmos
 
         /// <summary>Edit Mode: запрашивать перерисовку Scene View при появлении новой геометрии.</summary>
         public static bool EditorAutoRepaint { get => Current.EditorAutoRepaint; set => Overrides.EditorAutoRepaint = value; }
+
+        /// <summary>
+        /// Edit Mode: пока в эдит-моде кто-то рисует, просить редактор крутить player loop,
+        /// чтобы продюсер геометрии тикал независимо от того, где стоит курсор.
+        /// </summary>
+        public static bool EditorDriveUpdate { get => Current.EditorDriveUpdate; set => Overrides.EditorDriveUpdate = value; }
 
     }
 }

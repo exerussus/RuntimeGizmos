@@ -105,6 +105,12 @@ OUT=$(csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW,CS0108 \
       -define:UNITY_EDITOR "${REFS[@]}" -out:"$B/rgdemo.dll" stubs.cs editorstubs.cs $SRC $DEMO 2>&1 | grep -v warning) || true
 if [ -z "$OUT" ]; then echo "   компилируется: ok"; else echo "   ОШИБКА В ДЕМО"; echo "$OUT"; exit 1; fi
 
+echo "-- редакторная сборка"
+ED=$(find ../Packages/com.exerussus.runtimegizmos/Editor -name '*.cs')
+OUT=$(csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW,CS0108 \
+      -define:UNITY_EDITOR "${REFS[@]}" -out:"$B/rgeditor.dll" stubs.cs editorstubs.cs $SRC $ED 2>&1 | grep -v warning) || true
+if [ -z "$OUT" ]; then echo "   компилируется: ok"; else echo "   ОШИБКА В РЕДАКТОРНОЙ СБОРКЕ"; echo "$OUT"; exit 1; fi
+
 # Обещание GizmoLazy: в релизе исчезает вся цепочка — приёмник Track(...),
 # модификаторы и вычисление аргументов. Меряем длину IL-тела метода с вызовами:
 # если всё вырезано, там остаётся один ret. Пробу собираем ОТДЕЛЬНО от пакета,

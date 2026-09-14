@@ -56,13 +56,105 @@ namespace RuntimeGizmos.Internal
         {
             if (Application.isPlaying) return; // в плеймоде границу кадра держит PlayerLoop
 
+            // Выход из Play Mode сносит установку: Application.quitting дёргает Teardown,
+            // а тот снимает подписку на beginCameraRendering и вынимает узел из PlayerLoop.
+            // Дальше рисовать в эдит-моде нечем: EditorApplication.update тикает, кадр
+            // собирается, но на камеры его никто не отправляет. Раньше это прикрывал
+            // домен-релоад — он прогонял InitializeOnLoadMethod заново, — но с выключенным
+            // Domain Reload в Enter Play Mode Options его нет, и гизмо молчали до следующей
+            // компиляции.
+            //
+            // Восстанавливаем по флагу, а не по EnteredEditMode: порядок quitting и
+            // EnteredEditMode не гарантирован, и реакция на событие могла бы снова
+            // оказаться затёртой более поздним Teardown. Install идемпотентен.
+            if (_tornDown) Install();
+
+            // Неактивный редактор — это пауза, а не молчание продюсера: часы эдит-мода
+            // останавливаем, чтобы снимок не протух, пока человек в другом приложении.
+            bool focused = EditorApplication.isFocused;
+            GizmoRenderer.EditorClockPaused = !focused;
+
             Registry.Tick();
             bool hadData = GizmoRenderer.HasProducedData;
             GizmoRenderer.BeginFrame(strict: false);
 
             if (hadData && GizmoSettings.EditorAutoRepaint)
                 SceneView.RepaintAll();
+
+            // В фоне не будим вовсе: смотреть на это некому, а снимок и так не гаснет.
+            if (focused) DriveEditorUpdate(hadData);
         }
+
+        /// <summary>
+        /// Не даём продюсеру геометрии замолчать.
+        ///
+        /// Продюсер в эдит-моде — это Update компонента с [ExecuteAlways] или вызов из кода
+        /// редактора, а player loop редактор крутит сам только когда сцена «шевелится»:
+        /// курсор над Scene View, изменение объекта, анимация. Уводишь курсор в Game View,
+        /// Inspector или вообще в другое приложение — тики прекращаются, рисовать становится
+        /// некому, снимок протухает. Scene View это скрывает (он просто не перерисовывается,
+        /// на экране остаются прошлые пиксели), а Game View перерисовывается и честно
+        /// показывает пустоту. Отсюда и жалоба «пропадает именно в Game».
+        ///
+        /// Поэтому пока продюсер жив, мы сами просим редактор о тике: player loop крутится
+        /// независимо от курсора, Update вызывается, геометрия в каждом кадре свежая.
+        ///
+        /// Ставка включается по первым же данным и снимается после DriveGrace секунд часов
+        /// эдит-мода без них. Без ставки редактор всё равно получает редкий пробный тик раз
+        /// в ProbeInterval — иначе продюсера, который ещё ни разу не рисовал, было бы нечем
+        /// разбудить. В фоне (редактор неактивен) не будим вообще, см. EditorTick.
+        /// Насовсем отключается через GizmoSettings.EditorDriveUpdate.
+        /// </summary>
+        static void DriveEditorUpdate(bool hadData)
+        {
+            if (!GizmoSettings.EditorDriveUpdate)
+            {
+                _driving = false;
+                return;
+            }
+
+            if (hadData)
+            {
+                _driving = true;
+                _driveLastData = GizmoRenderer.EditorClock;
+            }
+            else if (_driving && GizmoRenderer.EditorClock - _driveLastData > DriveGrace)
+            {
+                _driving = false;
+            }
+
+            if (_driving)
+            {
+                EditorApplication.QueuePlayerLoopUpdate();
+                return;
+            }
+
+            // Ставки нет: либо продюсер давно замолчал, либо в эдит-моде ещё никто не рисовал.
+            // Второе — замкнутый круг: продюсер не тикает, значит данных нет, значит ставку
+            // не включить. Именно это видно, если курсор лежит в Game View с самого открытия
+            // сцены: в Scene View достаточно шевельнуть мышью, а в Game шевелить нечем.
+            // Поэтому редкий пробный тик — ожившего продюсера он подхватывает за доли секунды,
+            // а простаивающий проект почти не трогает.
+            float clock = GizmoRenderer.EditorClock;
+            if (clock - _probeClock < ProbeInterval) return;
+
+            _probeClock = clock;
+            EditorApplication.QueuePlayerLoopUpdate();
+        }
+
+        /// <summary>Сколько секунд живого редактора без новых команд ждать, прежде чем перестать будить player loop.</summary>
+        const float DriveGrace = 5f;
+
+        /// <summary>Как часто будить редактор, когда рисовать пока некому.</summary>
+        const float ProbeInterval = 0.25f;
+
+        static bool _driving;
+        static float _driveLastData;
+        static float _probeClock;
+
+        // Для страницы Project Settings: показать, в каком состоянии установка и ставка.
+        internal static bool EditorInstalled => !_tornDown;
+        internal static bool EditorDriving => _driving;
 #endif
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -89,6 +181,8 @@ namespace RuntimeGizmos.Internal
             // Install всегда идёт с главного потока — отсюда и берём эталон для проверки.
             GizmoRenderer.MainThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
 
+            _tornDown = false;
+
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
             RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
 
@@ -98,10 +192,17 @@ namespace RuntimeGizmos.Internal
 
         static void Teardown()
         {
+            _tornDown = true;
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
             RemovePlayerLoop();
             GizmoRenderer.Dispose();
         }
+
+        /// <summary>
+        /// Установка снята — подписки нет, узла в PlayerLoop нет. Поднять обратно.
+        /// Ставится в Teardown, снимается в Install.
+        /// </summary>
+        static bool _tornDown;
 
         static bool _warned;
 
@@ -122,7 +223,13 @@ namespace RuntimeGizmos.Internal
         {
             // GizmoLazy рисует ДО обмена буферов, иначе опоздал бы на кадр.
             Registry.Tick();
-            GizmoRenderer.BeginFrame(strict: true);
+
+            // Строгая семантика — это про плеймод: не нарисовал в кадре, значит не видно.
+            // Player loop крутится и в эдит-моде (Unity запускает его, когда сцена
+            // «шевелится», и по нашему же запросу — см. DriveEditorUpdate), и там граница
+            // кадра обязана быть мягкой: иначе первый же тик, в котором продюсер не рисовал,
+            // гасил бы геометрию мгновенно, в обход EditorStaleTimeout.
+            GizmoRenderer.BeginFrame(strict: Application.isPlaying);
         }
 
         static void InsertPlayerLoop()

@@ -37,6 +37,7 @@ public static class Tests
 
     static T Priv<T>(Type t, string field) => (T)t.GetField(field, BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
     static void Call(Type t, string m) => t.GetMethod(m, BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+    static void SetPriv(Type t, string field, object value) => t.GetField(field, BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, value);
 
     // Сколько публичных расширений помечены [Conditional] — без этого в релизе
     // остался бы и Scope, и вычисление аргументов.
@@ -247,9 +248,39 @@ public static class Tests
             Time.realtimeSinceStartup = 100.1f;
             GizmoRenderer.BeginFrame(strict: false);
             Check("D5 edit mode: снимок держится внутри таймаута", thin[0].Prepare(out _, out _));
-            Time.realtimeSinceStartup = 101f; GizmoRenderer.BeginFrame(strict: false);
-            Time.realtimeSinceStartup = 102f; GizmoRenderer.BeginFrame(strict: false);
-            Check("D6 edit mode: после таймаута исчезает", !thin[0].Prepare(out _, out _));
+
+            // Разрыв в стенных часах — это пауза редактора (переключение окна, компиляция,
+            // импорт), а не признак того, что продюсер замолчал: на паузе его просто не
+            // вызывали. Гасить снимок по такому разрыву нельзя — вьюпорт успеет
+            // перерисоваться пустым, и это видно как мигание.
+            Time.realtimeSinceStartup = 120f;
+            GizmoRenderer.BeginFrame(strict: false);
+            Check("D6 edit mode: пауза редактора не гасит снимок", thin[0].Prepare(out _, out _));
+
+            // А живой редактор без новых команд гасит: таймаут отмеряется тиками.
+            for (int i = 0; i < 20; i++)
+            {
+                Time.realtimeSinceStartup += 0.02f;
+                GizmoRenderer.BeginFrame(strict: false);
+            }
+            Check("D6a edit mode: после таймаута живого редактора исчезает", !thin[0].Prepare(out _, out _));
+
+            // Снимок, который ещё ни одна камера не забрала, не гаснет по таймауту:
+            // иначе геометрия успела бы протухнуть, ни разу не появившись на экране.
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            GizmoRenderer.BeginFrame(strict: false);
+            for (int i = 0; i < 40; i++)
+            {
+                Time.realtimeSinceStartup += 0.02f;
+                GizmoRenderer.BeginFrame(strict: false);
+            }
+            Check("D6b edit mode: непоказанный снимок ждёт камеру", thin[0].Prepare(out _, out _));
+            for (int i = 0; i < 40; i++)
+            {
+                Time.realtimeSinceStartup += 0.02f;
+                GizmoRenderer.BeginFrame(strict: false);
+            }
+            Check("D6c edit mode: показанный снимок гаснет как обычно", !thin[0].Prepare(out _, out _));
 
             // duration
             Boot();
@@ -354,6 +385,117 @@ public static class Tests
             Call(loop, "Install");
             Check("F4 переустанавливается после сброса лупа", CountGizmoNodes() == 1);
             Check("F5 стоит первым в PostLateUpdate", FirstInPostLate());
+
+            // Регрессия: выход из Play Mode дёргает Teardown через Application.quitting.
+            // Узел вынут, подписка на камеры снята — и без домен-релоада (Enter Play Mode
+            // Options) InitializeOnLoadMethod заново не выполнится. Раньше эдит-мод после
+            // первого же запуска оставался без отрисовки до следующей компиляции.
+            Check("F6 перед проверкой висит ровно одна подписка", CameraHookCount() == 1,
+                  "" + CameraHookCount());
+            Call(loop, "Teardown");
+            Check("F7 Teardown снимает и узел, и подписку",
+                  CountGizmoNodes() == 0 && CameraHookCount() == 0,
+                  CountGizmoNodes() + "/" + CameraHookCount());
+            Call(loop, "EditorTick");
+            Check("F8 первый тик эдит-мода поднимает установку обратно",
+                  CountGizmoNodes() == 1 && CameraHookCount() == 1,
+                  CountGizmoNodes() + "/" + CameraHookCount());
+            Call(loop, "EditorTick");
+            Check("F9 дальше тик ничего не дублирует",
+                  CountGizmoNodes() == 1 && CameraHookCount() == 1,
+                  CountGizmoNodes() + "/" + CameraHookCount());
+
+            // Player loop крутится и в эдит-моде: Unity запускает его, когда сцена
+            // «шевелится», и по запросу пакета. Строгая граница кадра оттуда гасила бы
+            // геометрию на первом же тике без команд — в обход EditorStaleTimeout.
+            Boot();
+            GizmoRenderer.Ensure();
+            var pl = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Call(loop, "PlayerLoopBeginFrame");
+            Check("F10 тик player loop показывает нарисованное", pl[0].Prepare(out _, out _));
+            Call(loop, "PlayerLoopBeginFrame");
+            Check("F11 эдит-мод: тик без команд не гасит снимок", pl[0].Prepare(out _, out _));
+            Application.isPlaying = true;
+            Call(loop, "PlayerLoopBeginFrame");
+            Check("F12 плеймод: строгая семантика на месте", !pl[0].Prepare(out _, out _));
+            Application.isPlaying = false;
+
+            // Пока в эдит-моде кто-то рисует, пакет сам просит редактор о тике: иначе
+            // продюсер молчит, стоит увести курсор из Scene View, и Game View пустеет.
+            UnityEditor.EditorApplication.QueuedPlayerLoopUpdates = 0;
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Call(loop, "EditorTick");
+            Check("F13 живой продюсер — просим тик", UnityEditor.EditorApplication.QueuedPlayerLoopUpdates == 1,
+                  "" + UnityEditor.EditorApplication.QueuedPlayerLoopUpdates);
+            Call(loop, "EditorTick");
+            Check("F14 и следующий тик просим тоже, без новых команд",
+                  UnityEditor.EditorApplication.QueuedPlayerLoopUpdates == 2,
+                  "" + UnityEditor.EditorApplication.QueuedPlayerLoopUpdates);
+
+            for (int i = 0; i < 400; i++)
+            {
+                Time.realtimeSinceStartup += 0.05f;
+                Call(loop, "EditorTick");
+            }
+            int queued = UnityEditor.EditorApplication.QueuedPlayerLoopUpdates;
+            Call(loop, "EditorTick");
+            Check("F15 после долгой тишины будим только пробными тиками",
+                  UnityEditor.EditorApplication.QueuedPlayerLoopUpdates == queued,
+                  "" + (UnityEditor.EditorApplication.QueuedPlayerLoopUpdates - queued));
+
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Call(loop, "EditorTick");
+            Check("F16 ожил продюсер — ожила и ставка",
+                  UnityEditor.EditorApplication.QueuedPlayerLoopUpdates == queued + 1,
+                  "" + (UnityEditor.EditorApplication.QueuedPlayerLoopUpdates - queued));
+
+            GizmoSettings.EditorDriveUpdate = false;
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            queued = UnityEditor.EditorApplication.QueuedPlayerLoopUpdates;
+            Call(loop, "EditorTick");
+            Check("F17 настройкой выключается наглухо",
+                  UnityEditor.EditorApplication.QueuedPlayerLoopUpdates == queued);
+            GizmoSettings.ResetOverrides();
+
+            // Пробный тик. Продюсера, который ещё ни разу не рисовал, иначе нечем разбудить:
+            // данных нет, значит ставки нет, значит тиков нет, значит данных нет. Ровно этот
+            // круг и видно, если курсор лежит в Game View с самого открытия сцены.
+            SetPriv(loop, "_driving", false);
+            SetPriv(loop, "_probeClock", GizmoRenderer.EditorClock - 10f);
+            queued = UnityEditor.EditorApplication.QueuedPlayerLoopUpdates;
+            Call(loop, "EditorTick");
+            Check("F18 без данных редактор всё равно получает пробный тик",
+                  UnityEditor.EditorApplication.QueuedPlayerLoopUpdates == queued + 1,
+                  "" + (UnityEditor.EditorApplication.QueuedPlayerLoopUpdates - queued));
+
+            queued = UnityEditor.EditorApplication.QueuedPlayerLoopUpdates;
+            Call(loop, "EditorTick");
+            Check("F19 но не на каждом тике",
+                  UnityEditor.EditorApplication.QueuedPlayerLoopUpdates == queued);
+
+            // Неактивный редактор: часы эдит-мода стоят, снимок не гаснет, и в фон мы не лезим.
+            Boot();
+            GizmoRenderer.Ensure();
+            var bg = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Call(loop, "EditorTick");
+            Check("F20 снимок на месте до анфокуса", bg[0].Prepare(out _, out _));
+
+            UnityEditor.EditorApplication.isFocused = false;
+            queued = UnityEditor.EditorApplication.QueuedPlayerLoopUpdates;
+            for (int i = 0; i < 100; i++)
+            {
+                Time.realtimeSinceStartup += 0.05f;
+                Call(loop, "EditorTick");
+            }
+            Check("F21 анфокус: снимок не гаснет", bg[0].Prepare(out _, out _));
+            Check("F22 анфокус: редактор в фоне не будим",
+                  UnityEditor.EditorApplication.QueuedPlayerLoopUpdates == queued,
+                  "" + (UnityEditor.EditorApplication.QueuedPlayerLoopUpdates - queued));
+
+            UnityEditor.EditorApplication.isFocused = true;
+            GizmoRenderer.EditorClockPaused = false;
         }
 
         // ==================================================== G. жизненный цикл
@@ -2014,6 +2156,16 @@ public static class Tests
         }
         Walk(UnityEngine.LowLevel.PlayerLoop.GetCurrentPlayerLoop());
         return n;
+    }
+
+    // Сколько обработчиков висит на RenderPipelineManager.beginCameraRendering.
+    // Событие field-like, поэтому за ним стоит одноимённое приватное статическое поле.
+    static int CameraHookCount()
+    {
+        var f = typeof(RenderPipelineManager).GetField("beginCameraRendering",
+                    BindingFlags.NonPublic | BindingFlags.Static);
+        var d = (Delegate)f.GetValue(null);
+        return d == null ? 0 : d.GetInvocationList().Length;
     }
 
     static bool FirstInPostLate()

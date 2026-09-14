@@ -52,6 +52,7 @@ namespace RuntimeGizmos
         [Tooltip("Сегментов в кольце сплошной сферы.")] public GizmoOptionalInt SphereSegments;
         [Tooltip("Edit Mode: сколько секунд держать последний снимок геометрии без новых команд.")] public GizmoOptionalFloat EditorStaleTimeout;
         [Tooltip("Edit Mode: запрашивать перерисовку Scene View при появлении новой геометрии.")] public GizmoOptionalBool EditorAutoRepaint;
+        [Tooltip("Edit Mode: пока в эдит-моде кто-то рисует, просить редактор крутить player loop — иначе продюсер тикает только пока курсор над Scene View.")] public GizmoOptionalBool EditorDriveUpdate;
         [Tooltip("Отступ угловых надписей DrawScreenText от краёв экрана, в пикселях. Считается до края чернил.")] public GizmoOptionalFloat ScreenSafeArea;
         [Tooltip("Просвет между колонками экранной таблицы, в ширинах символа.")] public GizmoOptionalFloat HudColumnGap;
         [Tooltip("Потолок ячеек экранной раскладки на кадр. Буферы выделяются один раз под этот размер.")] public GizmoOptionalInt HudMaxCells;
@@ -73,6 +74,7 @@ namespace RuntimeGizmos
             if (SphereSegments.Use) c.SphereSegments = SphereSegments.Value;
             if (EditorStaleTimeout.Use) c.EditorStaleTimeout = EditorStaleTimeout.Value;
             if (EditorAutoRepaint.Use) c.EditorAutoRepaint = EditorAutoRepaint.Value;
+            if (EditorDriveUpdate.Use) c.EditorDriveUpdate = EditorDriveUpdate.Value;
             if (ScreenSafeArea.Use) c.ScreenSafeArea = ScreenSafeArea.Value;
             if (HudColumnGap.Use) c.HudColumnGap = HudColumnGap.Value;
             if (HudMaxCells.Use) c.HudMaxCells = HudMaxCells.Value;
@@ -120,74 +122,5 @@ namespace RuntimeGizmos
             // Правки в инспекторе должны быть видны сразу, без перезапуска.
             GizmoSettings.Invalidate();
         }
-
-#if UNITY_EDITOR
-        [UnityEditor.MenuItem("Tools/RuntimeGizmos/Создать ассет настроек")]
-        static void CreateAsset()
-        {
-            const string dir = "Assets/Resources";
-            string path = dir + "/" + GizmoSettings.AssetResourceName + ".asset";
-
-            var existing = UnityEditor.AssetDatabase.LoadAssetAtPath<GizmoSettingsAsset>(path);
-            if (existing != null)
-            {
-                UnityEditor.Selection.activeObject = existing;
-                UnityEditor.EditorGUIUtility.PingObject(existing);
-                return;
-            }
-
-            if (!UnityEditor.AssetDatabase.IsValidFolder(dir))
-                UnityEditor.AssetDatabase.CreateFolder("Assets", "Resources");
-
-            var asset = CreateInstance<GizmoSettingsAsset>();
-            UnityEditor.AssetDatabase.CreateAsset(asset, path);
-            UnityEditor.AssetDatabase.SaveAssets();
-
-            GizmoSettings.ReloadAsset();
-            UnityEditor.Selection.activeObject = asset;
-        }
-#endif
     }
-
-#if UNITY_EDITOR
-    /// <summary>
-    /// Рисует пару Use/Value одной строкой: галочка слева, значение справа и погашено,
-    /// пока галочка снята. Иначе ассет превращается в четырнадцать раскрывающихся списков.
-    /// </summary>
-    [UnityEditor.CustomPropertyDrawer(typeof(GizmoOptionalBool))]
-    [UnityEditor.CustomPropertyDrawer(typeof(GizmoOptionalInt))]
-    [UnityEditor.CustomPropertyDrawer(typeof(GizmoOptionalUInt))]
-    [UnityEditor.CustomPropertyDrawer(typeof(GizmoOptionalFloat))]
-    internal sealed class GizmoOptionalDrawer : UnityEditor.PropertyDrawer
-    {
-        public override void OnGUI(Rect pos, UnityEditor.SerializedProperty prop, GUIContent label)
-        {
-            var use = prop.FindPropertyRelative("Use");
-            var val = prop.FindPropertyRelative("Value");
-            if (use == null || val == null)
-            {
-                UnityEditor.EditorGUI.PropertyField(pos, prop, label, true);
-                return;
-            }
-
-            UnityEditor.EditorGUI.BeginProperty(pos, label, prop);
-
-            float toggleW = UnityEditor.EditorGUIUtility.labelWidth;
-            var togglePos = new Rect(pos.x, pos.y, toggleW, UnityEditor.EditorGUIUtility.singleLineHeight);
-            use.boolValue = UnityEditor.EditorGUI.ToggleLeft(togglePos, label, use.boolValue);
-
-            var valuePos = new Rect(togglePos.xMax + 4f, pos.y,
-                Mathf.Max(40f, pos.xMax - togglePos.xMax - 4f),
-                UnityEditor.EditorGUIUtility.singleLineHeight);
-
-            using (new UnityEditor.EditorGUI.DisabledScope(!use.boolValue))
-                UnityEditor.EditorGUI.PropertyField(valuePos, val, GUIContent.none);
-
-            UnityEditor.EditorGUI.EndProperty();
-        }
-
-        public override float GetPropertyHeight(UnityEditor.SerializedProperty prop, GUIContent label)
-            => UnityEditor.EditorGUIUtility.singleLineHeight;
-    }
-#endif
 }

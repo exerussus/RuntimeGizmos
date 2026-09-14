@@ -104,6 +104,7 @@ namespace RuntimeGizmos.Internal
         static int _mpbCursor;
         static bool _ready;
         static float _meshLastData;
+        static bool _meshShown;
         static bool _linearColor;
 
         // Последняя альфа, уже разложенная по материалам. GlobalAlpha меняется редко,
@@ -121,6 +122,9 @@ namespace RuntimeGizmos.Internal
 
         /// <summary>Поток, на котором система была установлена. Всё остальное — ошибка.</summary>
         internal static int MainThreadId;
+
+        /// <summary>Рендерер поднят: материалы, шрифт и буферы на месте.</summary>
+        internal static bool Ready => _ready;
 
         internal static void Ensure()
         {
@@ -280,6 +284,62 @@ namespace RuntimeGizmos.Internal
             _meshFront.Clear(); _meshBack.Clear(); _meshRetained.Clear();
         }
 
+        // ==================================================================== часы эдит-мода
+
+        /// <summary>
+        /// Часы, по которым в эдит-моде считается протухание последнего снимка.
+        ///
+        /// Стенные часы для этого не годятся. Продюсер геометрии в эдит-моде — это
+        /// Update компонента с [ExecuteAlways] или вызов из кода редактора, и он
+        /// молчит вместе с редактором: переключение окна, потеря фокуса, импорт
+        /// ассета, компиляция. Стенное время при этом идёт, и первый же тик после
+        /// паузы видел разрыв больше таймаута и сбрасывал снимок — а вьюпорт успевал
+        /// перерисоваться пустым. Это и есть мигание при переключении окон.
+        ///
+        /// Поэтому шаг часов зажат: сколь угодно долгая пауза считается за один
+        /// обычный кадр. Снимок переживает переключение окон, компиляцию и импорт,
+        /// а по-настоящему замолчавший продюсер по-прежнему гаснет за
+        /// EditorStaleTimeout секунд живого редактора.
+        /// </summary>
+        internal static float EditorClock;
+
+        /// <summary>
+        /// Эдит-мод: часы стоят.
+        ///
+        /// Ставится, когда редактор не активен в системе. Продюсер геометрии в это время
+        /// всё равно не работает, а гасить снимок за то, что человек ушёл в другое
+        /// приложение, нельзя: он наведёт курсор на неактивное окно Unity — а Game View
+        /// перерисуется и покажет пустоту.
+        /// </summary>
+        internal static bool EditorClockPaused;
+
+        /// <summary>Максимальный шаг часов эдит-мода за одну границу кадра.</summary>
+        const float EditorClockMaxStep = 0.05f;
+
+        static float _editorClockReal;
+        static float _editorLastData = float.NegativeInfinity;
+
+        /// <summary>
+        /// Сколько секунд часов эдит-мода прошло с последних команд Draw*.
+        /// Отрицательное значение — команд в этой сессии не было вовсе.
+        /// </summary>
+        internal static float EditorSinceData
+            => float.IsNegativeInfinity(_editorLastData) ? -1f : EditorClock - _editorLastData;
+
+        static void AdvanceEditorClock()
+        {
+            float real = Time.realtimeSinceStartup;
+            float dt = real - _editorClockReal;
+            _editorClockReal = real;   // базу двигаем всегда: иначе пауза «догонит» после возврата
+
+            if (EditorClockPaused) return;
+
+            // dt <= 0 — часы перезапустились вместе с сессией (или это первый вызов).
+            if (dt <= 0f) return;
+
+            EditorClock += dt < EditorClockMaxStep ? dt : EditorClockMaxStep;
+        }
+
         // ==================================================================== кадр
 
         internal static bool HasProducedData;
@@ -308,16 +368,21 @@ namespace RuntimeGizmos.Internal
             float t = Now;
             float stale = GizmoSettings.EditorStaleTimeout;
 
+            // Протухание снимка в эдит-моде считается не стенными часами, а своими —
+            // с зажатым шагом. Подробности у EditorClock.
+            if (!strict) AdvanceEditorClock();
+            float clock = EditorClock;
+
             for (int i = 0; i < 2; i++)
             {
-                _thin[i].BeginFrame(strict, t, stale);
-                _wide[i].BeginFrame(strict, t, stale);
-                _tri[i].BeginFrame(strict, t, stale);
-                _text[i].BeginFrame(strict, t, stale);
+                _thin[i].BeginFrame(strict, t, clock, stale);
+                _wide[i].BeginFrame(strict, t, clock, stale);
+                _tri[i].BeginFrame(strict, t, clock, stale);
+                _text[i].BeginFrame(strict, t, clock, stale);
             }
 
-            foreach (var b in _icons.Values) b.Channel.BeginFrame(strict, t, stale);
-            foreach (var b in _screen.Values) b.Channel.BeginFrame(strict, t, stale);
+            foreach (var b in _icons.Values) b.Channel.BeginFrame(strict, t, clock, stale);
+            foreach (var b in _screen.Values) b.Channel.BeginFrame(strict, t, clock, stale);
 
             // Текстуру могли уничтожить — батч с ней уже ничего не нарисует, а нативные
             // буферы и меши держит. Словари крошечные, обход раз в кадр бесплатный.
@@ -335,14 +400,18 @@ namespace RuntimeGizmos.Internal
             {
                 var tmp = _meshFront; _meshFront = _meshBack; _meshBack = tmp;
                 _meshBack.Clear();
-                _meshLastData = t;
+                _meshLastData = clock;
+                _meshShown = false;
             }
-            else if (strict || t - _meshLastData > stale)
+            else if (strict || (_meshShown && clock - _meshLastData > stale))
             {
                 _meshFront.Clear();
             }
 
             DashRun = 0f;
+
+            // Диагностика страницы настроек: когда продюсер последний раз что-то нарисовал.
+            if (HasProducedData) _editorLastData = clock;
             HasProducedData = false;
 
             // Штамп для команд следующего кадра.
@@ -442,6 +511,7 @@ namespace RuntimeGizmos.Internal
             _mpbCursor = 0;
             SubmitMeshList(ref rp, _meshRetained);
             SubmitMeshList(ref rp, _meshFront);
+            if (_meshFront.Count > 0) _meshShown = true;
         }
 
         /// <summary>
