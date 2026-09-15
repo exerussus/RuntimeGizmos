@@ -2123,6 +2123,97 @@ public static class Tests
             GizmoSettings.ResetOverrides();
         }
 
+        // ==================================================== AB. Scope и состояние
+        Group("AB. Scope и глобальное состояние");
+        {
+            Boot();
+            GizmoRenderer.Ensure();
+            var thin = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+
+            float MaxDash(GizmoChannel<GizmoVertex> c)
+            { var b=c.Target(false); float m=float.MinValue; unsafe{for(int i=0;i<b.Count;i++) m=Math.Max(m,b.Ptr[i].Dash);} return m; }
+            float MinDash(GizmoChannel<GizmoVertex> c)
+            { var b=c.Target(false); float m=float.MaxValue; unsafe{for(int i=0;i<b.Count;i++) m=Math.Min(m,b.Ptr[i].Dash);} return m; }
+
+            // Состояние рисования глобальное: пунктир, забытый внутри scope, доставался
+            // всему последующему коду, в том числе чужому, который ждёт сплошную линию.
+            Gizmo.Reset();
+            using (Gizmo.Scope()) Gizmo.dash = 0.2f;
+            Check("AB1 Scope возвращает пунктир", Math.Abs(Gizmo.dash) < 1e-6f, "" + Gizmo.dash);
+
+            // Вернуть нужно и фазу: у ломаной, прерванной scope, иначе появится шов.
+            Gizmo.Reset();
+            Gizmo.dash = 0.5f;
+            Gizmo.DrawLine(Vector3.zero, new Vector3(1f, 0f, 0f));       // фаза добежала до 1/0.5 = 2
+            using (Gizmo.Scope())
+            {
+                Gizmo.dash = 0.1f;
+                Gizmo.DrawLine(Vector3.zero, new Vector3(3f, 0f, 0f));
+            }
+            thin[0].Clear();
+            Gizmo.DrawLine(new Vector3(1f, 0f, 0f), new Vector3(2f, 0f, 0f));
+            Check("AB2 Scope возвращает и фазу пунктира", Math.Abs(MinDash(thin[0]) - 2f) < 1e-4f,
+                  "" + MinDash(thin[0]));
+
+            // Вложенность: внутренний scope возвращает состояние внешнего, а не дефолт.
+            Gizmo.Reset();
+            using (Gizmo.Scope())
+            {
+                Gizmo.dash = 0.3f;
+                using (Gizmo.Scope()) Gizmo.dash = 0f;
+                Check("AB3 вложенный Scope возвращает состояние внешнего",
+                      Math.Abs(Gizmo.dash - 0.3f) < 1e-6f, "" + Gizmo.dash);
+            }
+            Check("AB4 внешний Scope возвращает дефолт", Math.Abs(Gizmo.dash) < 1e-6f, "" + Gizmo.dash);
+
+            // Перегрузки со цветом и матрицей снимают тот же снимок.
+            Gizmo.Reset();
+            using (Gizmo.Scope(Color.red)) Gizmo.dash = 0.2f;
+            bool ok = Math.Abs(Gizmo.dash) < 1e-6f;
+            using (Gizmo.Scope(Matrix4x4.identity)) Gizmo.dash = 0.2f;
+            ok &= Math.Abs(Gizmo.dash) < 1e-6f;
+            using (Gizmo.Scope(Color.red, Matrix4x4.identity)) Gizmo.dash = 0.2f;
+            ok &= Math.Abs(Gizmo.dash) < 1e-6f;
+            Check("AB5 все перегрузки Scope ведут себя одинаково", ok, "" + Gizmo.dash);
+
+            // То, ради чего всё: линия после scope обязана быть сплошной.
+            Gizmo.Reset();
+            using (Gizmo.Scope(Color.gray))
+            {
+                Gizmo.dash = 0.2f;
+                Gizmo.DrawLine(Vector3.zero, new Vector3(5f, 0f, 0f));
+            }
+            thin[0].Clear();
+            Gizmo.DrawLine(Vector3.up, Vector3.up + new Vector3(5f, 0f, 0f));
+            Check("AB6 линия после пунктира в Scope сплошная", MaxDash(thin[0]) < 0f, "" + MaxDash(thin[0]));
+
+            // Новая сессия Play Mode начинается с чистого состояния. С выключенным Domain
+            // Reload статика переживает переход, поэтому сброс обязан быть явным.
+            Gizmo.color = Color.red;
+            Gizmo.matrix = Matrix4x4.TRS(Vector3.one, Quaternion.identity, Vector3.one);
+            Gizmo.lineWidth = 7f;
+            Gizmo.depthTest = false;
+            Gizmo.duration = 5f;
+            Gizmo.dash = 0.4f;
+            Call(typeof(GizmoLoop), "RuntimeInit");
+
+            Check("AB7 RuntimeInit чистит состояние",
+                  Gizmo.color == Color.white
+                  && Gizmo.matrix == Matrix4x4.identity
+                  && Gizmo.depthTest
+                  && Math.Abs(Gizmo.duration) < 1e-6f
+                  && Math.Abs(Gizmo.dash) < 1e-6f
+                  && Math.Abs(Gizmo.lineWidth - GizmoSettings.DefaultLineWidth) < 1e-6f,
+                  "dash=" + Gizmo.dash + " duration=" + Gizmo.duration + " width=" + Gizmo.lineWidth);
+
+            Boot();
+            GizmoRenderer.Ensure();
+            thin = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            thin[0].Clear();
+            Gizmo.DrawLine(Vector3.zero, new Vector3(5f, 0f, 0f));
+            Check("AB8 и рисует сплошным", MaxDash(thin[0]) < 0f, "" + MaxDash(thin[0]));
+        }
+
         Console.WriteLine("\n═══════════════════════════════════");
         Console.WriteLine($"  прошло {_pass}, упало {_fail}");
         Console.WriteLine("═══════════════════════════════════");

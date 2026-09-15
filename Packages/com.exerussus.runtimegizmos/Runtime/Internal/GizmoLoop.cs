@@ -43,11 +43,15 @@ namespace RuntimeGizmos.Internal
         {
             // С выключенным Domain Reload статика переживает вход и выход из Play Mode.
             // Поэтому на обеих границах сносим всё нажитое: и накопленную геометрию,
-            // и материалы с нативными буферами, и рантайм-оверрайды настроек.
+            // и материалы с нативными буферами, и рантайм-оверрайды настроек, и состояние
+            // рисования. Последнее важно не меньше: цвет, матрица, пунктир и его фаза —
+            // обычная статика, и без сброса эдит-мод после плеймода (а с выключенным
+            // релоадом и следующая сессия) рисовал бы чужим состоянием.
             if (s == PlayModeStateChange.ExitingEditMode || s == PlayModeStateChange.ExitingPlayMode)
             {
                 GizmoRenderer.Dispose();
                 GizmoSettings.ResetSession();
+                Gizmo.ResetState();
                 Registry.Clear();
             }
         }
@@ -166,6 +170,7 @@ namespace RuntimeGizmos.Internal
             // выставленные пользовательским кодом, уже не затрутся.
             GizmoRenderer.Dispose();
             GizmoSettings.ResetSession();
+            Gizmo.ResetState();
             Registry.Clear();
 
             Install();

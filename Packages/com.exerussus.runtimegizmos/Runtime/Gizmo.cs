@@ -144,6 +144,11 @@ namespace RuntimeGizmos
         public static GizmoScope Scope(Matrix4x4 m) { var s = new GizmoScope(true); matrix = m; return s; }
         public static GizmoScope Scope(Color c, Matrix4x4 m) { var s = new GizmoScope(true); color = c; matrix = m; return s; }
 
+        /// <summary>
+        /// Снимок всего состояния рисования: цвет, матрица, толщина, глубина, время жизни
+        /// и пунктир вместе с фазой. Состояние глобальное, поэтому забытый внутри scope
+        /// пунктир раньше доставался всему последующему коду, включая чужой.
+        /// </summary>
         public readonly struct GizmoScope : IDisposable
         {
             readonly Color _c;
@@ -151,6 +156,8 @@ namespace RuntimeGizmos
             readonly float _w;
             readonly int _z;
             readonly float _d;
+            readonly float _dash;
+            readonly float _dashRun;
 
             internal GizmoScope(bool dummy)
             {
@@ -159,6 +166,8 @@ namespace RuntimeGizmos
                 this._w = GizmoRenderer.Width;
                 this._z = GizmoRenderer.Z;
                 this._d = GizmoRenderer.Duration;
+                this._dash = GizmoRenderer.Dash;
+                this._dashRun = GizmoRenderer.DashRun;
             }
 
             public void Dispose()
@@ -168,6 +177,12 @@ namespace RuntimeGizmos
                 GizmoRenderer.Width = _w;
                 GizmoRenderer.Z = _z;
                 GizmoRenderer.Duration = _d;
+
+                // Напрямую в поля, а не через Gizmo.dash: сеттер обнуляет фазу, а вернуть
+                // нужно и её — иначе у ломаной, прерванной scope, штрихи начнутся заново
+                // и на изломе появится шов.
+                GizmoRenderer.Dash = _dash;
+                GizmoRenderer.DashRun = _dashRun;
             }
         }
 
