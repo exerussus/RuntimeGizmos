@@ -62,7 +62,14 @@ namespace RuntimeGizmos.Internal
         // подтянуть свежий дефолт (платформа могла уточниться, см. RedetectPlatform), но не
         // имеет права затирать значение, которое пользователь выставил до первого Draw*.
         internal static bool WidthIsDefault = true;
-        internal static int Z;            // 0 = с тестом глубины, 1 = поверх всего
+        internal static int Z;            // 0 = с тестом глубины, 1 = поверх всего, 2 = призрак
+
+        /// <summary>
+        /// Маска категорий, в которые пишут последующие Draw*. Проверяется в Begin() против
+        /// GizmoSettings.EnabledCategories: вызов в выключенной категории не доходит до буферов
+        /// и не считается данными кадра.
+        /// </summary>
+        internal static int Category = Gizmo.DefaultCategory;
         internal static float Duration;   // 0 = один кадр
         internal static float Dash;       // период пунктира в юнитах, 0 = сплошная
 
@@ -96,6 +103,19 @@ namespace RuntimeGizmos.Internal
 
         static Material[] _thinMat, _wideMat, _triMat, _meshMat, _iconMat, _screenMat;
 
+        /// <summary>
+        /// Материалы «перекрытой» половины призрачного слоя: ZTest Greater и своя альфа.
+        /// Слой Z = 2 отправляется дважды одним и тем же мешем — обычным материалом и этим.
+        /// Двойного блендинга не возникает: LEqual и Greater делят пиксели без пересечения.
+        /// </summary>
+        static Material _thinMatOcc, _wideMatOcc, _triMatOcc, _meshMatOcc, _textMatOcc;
+
+        /// <summary>Слои глубины: 0 — с тестом, 1 — поверх всего, 2 — призрак.</summary>
+        internal const int ZCount = 3;
+
+        /// <summary>Индекс призрачного слоя.</summary>
+        internal const int ZGhost = 2;
+
         static readonly Dictionary<GizmoObjectId, GizmoTexturedBatch> _icons = new Dictionary<GizmoObjectId, GizmoTexturedBatch>();
 
         // Иконки «поверх всего» (Gizmo.depthTest = false). Раньше батч ключевался одной
@@ -122,6 +142,7 @@ namespace RuntimeGizmos.Internal
         // NaN на старте: любое сравнение с ним ложно, поэтому первый Submit применит
         // значение в любом случае, даже если оно совпало с тем, что выставил MakeMat.
         static float _appliedAlpha = float.NaN;
+        static float _appliedGhost = float.NaN;
 
         // ==================================================================== init / teardown
 
@@ -166,24 +187,31 @@ namespace RuntimeGizmos.Internal
 
             _ready = true;
             _appliedAlpha = float.NaN;      // материалы пересозданы — кэш недействителен
+            _appliedGhost = float.NaN;
 
             // Раньше здесь стояло безусловное Width = DefaultLineWidth, и Gizmo.lineWidth = 3,
             // выставленный в Awake до первого Draw*, молча сбрасывался первым же вызовом.
             if (WidthIsDefault) Width = GizmoSettings.DefaultLineWidth;
 
-            _thinMat = new Material[2];
-            _wideMat = new Material[2];
-            _triMat = new Material[2];
-            _meshMat = new Material[2];
+            _thinMat = new Material[ZCount];
+            _wideMat = new Material[ZCount];
+            _triMat = new Material[ZCount];
+            _meshMat = new Material[ZCount];
             _iconMat = new Material[2];
-            _textMat = new Material[2];
+            _textMat = new Material[ZCount];
             _screenMat = new Material[1];
 
-            for (int z = 0; z < 2; z++)
+            for (int z = 0; z < ZCount; z++)
             {
-                bool depth = z == 0;
+                // Призрачный слой уважает глубину так же, как обычный: отличается он только
+                // тем, что перекрытую половину рисует ещё раз приглушёнными материалами ниже.
+                bool depth = z != 1;
+                bool ghost = z == ZGhost;
                 int zTest = depth ? (int)CompareFunction.LessEqual : (int)CompareFunction.Always;
-                int queue = (int)RenderQueue.Transparent + (depth ? 100 : 400);
+
+                // У призрака своя очередь: с обычным слоем они рисуют одно и то же место
+                // экрана, и порядок между ними не должен решаться сортировщиком прозрачных.
+                int queue = (int)RenderQueue.Transparent + (ghost ? 200 : depth ? 100 : 400);
 
                 float bias = depth ? GizmoSettings.DepthBias : 0f;
 
@@ -191,10 +219,33 @@ namespace RuntimeGizmos.Internal
                 _wideMat[z] = MakeMat(wide, "GizmoWide", zTest, 0, queue, bias);
                 // Сплошные фигуры с тестом глубины пишут в depth — так они корректно
                 // перекрывают друг друга. Режим "поверх всего" depth не пишет.
-                _triMat[z] = MakeMat(unlit, "GizmoSolid", zTest, depth ? 1 : 0, queue - 10, 0f);
-                _meshMat[z] = MakeMat(unlit, "GizmoMesh", zTest, depth ? 1 : 0, queue - 10, 0f);
-                _iconMat[z] = MakeMat(icon, "GizmoIcon", zTest, 0, queue + 10, bias);
+                //
+                // Призрак не пишет тоже, и это принципиально: обе его половины обязаны
+                // тестироваться против ОДНОГО И ТОГО ЖЕ буфера — того, что оставила сцена.
+                // Стоило видимой половине записать туда себя, и перекрытая начинала ловить
+                // собственные дальние грани: LEqual и Greater переставали делить пиксели,
+                // часть фигуры блендилась дважды, а какая именно — решал порядок сортировки.
+                // Цена — призрачные сплошные фигуры не перекрывают друг друга; для режима,
+                // который весь про «видно сквозь», это ожидаемо.
+                bool zwrite = depth && !ghost;
+                _triMat[z] = MakeMat(unlit, "GizmoSolid", zTest, zwrite ? 1 : 0, queue - 10, 0f);
+                _meshMat[z] = MakeMat(unlit, "GizmoMesh", zTest, zwrite ? 1 : 0, queue - 10, 0f);
+                if (z < _iconMat.Length) _iconMat[z] = MakeMat(icon, "GizmoIcon", zTest, 0, queue + 10, bias);
                 _textMat[z] = MakeMat(text, "GizmoText", zTest, 0, queue + 20, bias);
+            }
+
+            // Перекрытая половина призрака. ZWrite всегда выключен: прятать за собой то,
+            // что на самом деле ближе к камере, нельзя даже сплошным фигурам.
+            {
+                int greater = (int)CompareFunction.Greater;
+                int queue = (int)RenderQueue.Transparent + 200;   // та же очередь, что у видимой половины
+                float bias = GizmoSettings.DepthBias;
+
+                _thinMatOcc = MakeMat(unlit, "GizmoThinOccluded", greater, 0, queue, bias);
+                _wideMatOcc = MakeMat(wide, "GizmoWideOccluded", greater, 0, queue, bias);
+                _triMatOcc = MakeMat(unlit, "GizmoSolidOccluded", greater, 0, queue - 10, 0f);
+                _meshMatOcc = MakeMat(unlit, "GizmoMeshOccluded", greater, 0, queue - 10, 0f);
+                _textMatOcc = MakeMat(text, "GizmoTextOccluded", greater, 0, queue + 20, bias);
             }
 
             _screenMat[0] = MakeMat(screen, "GizmoScreen", (int)CompareFunction.Always, 0,
@@ -204,21 +255,25 @@ namespace RuntimeGizmos.Internal
             {
                 new GizmoChannel<GizmoVertex>("thin0", GizmoVertexLayouts.Thin, MeshTopology.Lines, 2, 2048),
                 new GizmoChannel<GizmoVertex>("thin1", GizmoVertexLayouts.Thin, MeshTopology.Lines, 2, 512),
+                new GizmoChannel<GizmoVertex>("thin2", GizmoVertexLayouts.Thin, MeshTopology.Lines, 2, 512),
             };
             _wide = new[]
             {
                 new GizmoChannel<GizmoWideVertex>("wide0", GizmoVertexLayouts.Wide, MeshTopology.Triangles, 6, 512, 0.25f),
                 new GizmoChannel<GizmoWideVertex>("wide1", GizmoVertexLayouts.Wide, MeshTopology.Triangles, 6, 256, 0.25f),
+                new GizmoChannel<GizmoWideVertex>("wide2", GizmoVertexLayouts.Wide, MeshTopology.Triangles, 6, 256, 0.25f),
             };
             _tri = new[]
             {
                 new GizmoChannel<GizmoVertex>("tri0", GizmoVertexLayouts.Thin, MeshTopology.Triangles, 3, 1024),
                 new GizmoChannel<GizmoVertex>("tri1", GizmoVertexLayouts.Thin, MeshTopology.Triangles, 3, 256),
+                new GizmoChannel<GizmoVertex>("tri2", GizmoVertexLayouts.Thin, MeshTopology.Triangles, 3, 256),
             };
             _text = new[]
             {
                 new GizmoChannel<GizmoTextVertex>("text0", GizmoVertexLayouts.Text, MeshTopology.Triangles, 6, 512, 0.25f),
                 new GizmoChannel<GizmoTextVertex>("text1", GizmoVertexLayouts.Text, MeshTopology.Triangles, 6, 256, 0.25f),
+                new GizmoChannel<GizmoTextVertex>("text2", GizmoVertexLayouts.Text, MeshTopology.Triangles, 6, 256, 0.25f),
             };
         }
 
@@ -292,6 +347,8 @@ namespace RuntimeGizmos.Internal
             DestroyMats(_thinMat); DestroyMats(_wideMat); DestroyMats(_triMat);
             DestroyMats(_meshMat); DestroyMats(_iconMat); DestroyMats(_screenMat);
             DestroyMats(_textMat);
+            DestroyMat(ref _thinMatOcc); DestroyMat(ref _wideMatOcc); DestroyMat(ref _triMatOcc);
+            DestroyMat(ref _meshMatOcc); DestroyMat(ref _textMatOcc);
 
             WarnedUnreadable.Clear();
 
@@ -306,6 +363,14 @@ namespace RuntimeGizmos.Internal
         {
             if (arr == null) return;
             for (int i = 0; i < arr.Length; i++) arr[i]?.Dispose();
+        }
+
+        static void DestroyMat(ref Material m)
+        {
+            if (m == null) return;
+            if (Application.isPlaying) UnityEngine.Object.Destroy(m);
+            else UnityEngine.Object.DestroyImmediate(m);
+            m = null;
         }
 
         static void DestroyMats(Material[] arr)
@@ -323,7 +388,7 @@ namespace RuntimeGizmos.Internal
         internal static void ClearAll()
         {
             if (!_ready) return;
-            for (int i = 0; i < 2; i++) { _thin[i].Clear(); _wide[i].Clear(); _tri[i].Clear(); _text[i].Clear(); }
+            for (int i = 0; i < ZCount; i++) { _thin[i].Clear(); _wide[i].Clear(); _tri[i].Clear(); _text[i].Clear(); }
             foreach (var b in _icons.Values) b.Channel.Clear();
             foreach (var b in _iconsTop.Values) b.Channel.Clear();
             foreach (var b in _screen.Values) b.Channel.Clear();
@@ -390,6 +455,48 @@ namespace RuntimeGizmos.Internal
 
         internal static bool HasProducedData;
 
+        // ------------------------------------------------------------------ счётчики кадра
+        //
+        // Снимаются на границе кадра, уже после обмена буферов, — то есть описывают ровно ту
+        // геометрию, которую увидят камеры. Публичный доступ — через Gizmo.Stats.
+
+        internal static int StatVertices, StatRetained, StatPeakChannel, StatMeshes, StatDrawCalls;
+        internal static bool StatOverflow;
+
+        static int _drawCalls;
+
+        static void CollectStats()
+        {
+            int verts = 0, retained = 0, peak = 0;
+            bool over = false;
+
+            for (int i = 0; i < ZCount; i++)
+            {
+                Account(_thin[i].VertexCount, _thin[i].RetainedCount, _thin[i].ConsumeOverflow());
+                Account(_wide[i].VertexCount, _wide[i].RetainedCount, _wide[i].ConsumeOverflow());
+                Account(_tri[i].VertexCount, _tri[i].RetainedCount, _tri[i].ConsumeOverflow());
+                Account(_text[i].VertexCount, _text[i].RetainedCount, _text[i].ConsumeOverflow());
+            }
+
+            foreach (var b in _icons.Values) Account(b.Channel.VertexCount, b.Channel.RetainedCount, b.Channel.ConsumeOverflow());
+            foreach (var b in _iconsTop.Values) Account(b.Channel.VertexCount, b.Channel.RetainedCount, b.Channel.ConsumeOverflow());
+            foreach (var b in _screen.Values) Account(b.Channel.VertexCount, b.Channel.RetainedCount, b.Channel.ConsumeOverflow());
+
+            StatVertices = verts;
+            StatRetained = retained;
+            StatPeakChannel = peak;
+            StatMeshes = _meshFront.Count + _meshRetained.Count;
+            StatOverflow = over;
+
+            void Account(int count, int ret, bool overflowed)
+            {
+                verts += count;
+                retained += ret;
+                if (count > peak) peak = count;
+                over |= overflowed;
+            }
+        }
+
         internal static void BeginFrame(bool strict)
         {
             if (!_ready)
@@ -419,7 +526,7 @@ namespace RuntimeGizmos.Internal
             if (!strict) AdvanceEditorClock();
             float clock = EditorClock;
 
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < ZCount; i++)
             {
                 _thin[i].BeginFrame(strict, t, clock, stale);
                 _wide[i].BeginFrame(strict, t, clock, stale);
@@ -457,6 +564,8 @@ namespace RuntimeGizmos.Internal
             }
 
             DashRun = 0f;
+
+            CollectStats();
 
             // Диагностика страницы настроек: когда продюсер последний раз что-то нарисовал.
             if (HasProducedData) _editorLastData = clock;
@@ -514,19 +623,39 @@ namespace RuntimeGizmos.Internal
             };
 
             float alpha = GizmoSettings.GlobalAlpha;
-            ApplyAlpha(alpha);
+            ApplyAlpha(alpha, GizmoSettings.GhostAlpha);
 
-            for (int z = 0; z < 2; z++)
+            // Счётчик обнуляется на камеру: у всех камер кадра он одинаковый, и в статистику
+            // попадает последняя — «сколько сабмитов стоит один показ».
+            _drawCalls = 0;
+
+            for (int z = 0; z < ZCount; z++)
             {
-                if (_tri[z].Prepare(out var m, out var b)) Emit(ref rp, _triMat[z], m, b);
-                if (_thin[z].Prepare(out m, out b)) Emit(ref rp, _thinMat[z], m, b);
-                if (_wide[z].Prepare(out m, out b)) Emit(ref rp, _wideMat[z], m, b);
+                bool ghost = z == ZGhost;
+                if (_tri[z].Prepare(out var m, out var b))
+                {
+                    Emit(ref rp, _triMat[z], m, b);
+                    if (ghost) Emit(ref rp, _triMatOcc, m, b);
+                }
+                if (_thin[z].Prepare(out m, out b))
+                {
+                    Emit(ref rp, _thinMat[z], m, b);
+                    if (ghost) Emit(ref rp, _thinMatOcc, m, b);
+                }
+                if (_wide[z].Prepare(out m, out b))
+                {
+                    Emit(ref rp, _wideMat[z], m, b);
+                    if (ghost) Emit(ref rp, _wideMatOcc, m, b);
+                }
             }
 
             var textBounds = new Bounds(cam.transform.position, new Vector3(1e5f, 1e5f, 1e5f));
-            for (int z = 0; z < 2; z++)
+            for (int z = 0; z < ZCount; z++)
                 if (_text[z].Prepare(out var tm, out _))
+                {
                     Emit(ref rp, _textMat[z], tm, textBounds);
+                    if (z == ZGhost) Emit(ref rp, _textMatOcc, tm, textBounds);
+                }
 
             SubmitIcons(ref rp, _icons, _iconMat[0]);
             SubmitIcons(ref rp, _iconsTop, _iconMat[1]);
@@ -545,6 +674,7 @@ namespace RuntimeGizmos.Internal
                         rp.worldBounds = camBounds;
                         Graphics.RenderMesh(rp, m, 0, Matrix4x4.identity);
                         rp.matProps = null;
+                        _drawCalls++;
                     }
             }
 
@@ -552,19 +682,24 @@ namespace RuntimeGizmos.Internal
             SubmitMeshList(ref rp, _meshRetained);
             SubmitMeshList(ref rp, _meshFront);
             if (_meshFront.Count > 0) _meshShown = true;
+
+            StatDrawCalls = _drawCalls;
         }
 
         /// <summary>
         /// Раскладывает глобальную альфу по материалам — но только когда она
         /// действительно поменялась. Набор материалов здесь ровно тот, что получал
         /// альфу раньше: иконки и экранные квады её не берут ни до, ни после.
+        /// Перекрытая половина призрака получает произведение: глушится она поверх
+        /// глобальной альфы, а не вместо неё.
         /// </summary>
-        static void ApplyAlpha(float alpha)
+        static void ApplyAlpha(float alpha, float ghost)
         {
-            if (alpha == _appliedAlpha) return;
+            if (alpha == _appliedAlpha && ghost == _appliedGhost) return;
             _appliedAlpha = alpha;
+            _appliedGhost = ghost;
 
-            for (int z = 0; z < 2; z++)
+            for (int z = 0; z < ZCount; z++)
             {
                 _triMat[z].SetFloat(AlphaId, alpha);
                 _thinMat[z].SetFloat(AlphaId, alpha);
@@ -572,6 +707,13 @@ namespace RuntimeGizmos.Internal
                 _textMat[z].SetFloat(AlphaId, alpha);
                 _meshMat[z].SetFloat(AlphaId, alpha);
             }
+
+            float occ = alpha * ghost;
+            _triMatOcc.SetFloat(AlphaId, occ);
+            _thinMatOcc.SetFloat(AlphaId, occ);
+            _wideMatOcc.SetFloat(AlphaId, occ);
+            _textMatOcc.SetFloat(AlphaId, occ);
+            _meshMatOcc.SetFloat(AlphaId, occ);
         }
 
         static void SubmitIcons(ref RenderParams rp, Dictionary<GizmoObjectId, GizmoTexturedBatch> batches, Material mat)
@@ -585,6 +727,7 @@ namespace RuntimeGizmos.Internal
                     rp.worldBounds = b;
                     Graphics.RenderMesh(rp, m, 0, Matrix4x4.identity);
                     rp.matProps = null;
+                    _drawCalls++;
                 }
         }
 
@@ -593,6 +736,7 @@ namespace RuntimeGizmos.Internal
             rp.material = mat;
             rp.worldBounds = b;
             Graphics.RenderMesh(rp, mesh, 0, Matrix4x4.identity);
+            _drawCalls++;
         }
 
         static void SubmitMeshList(ref RenderParams rp, GizmoMeshCmdList list)
@@ -623,6 +767,15 @@ namespace RuntimeGizmos.Internal
                 rp.worldBounds = new Bounds(center, wext * 2f);
 
                 Graphics.RenderMesh(rp, c.Mesh, c.Submesh, c.Matrix);
+                _drawCalls++;
+
+                if (c.Z == ZGhost)
+                {
+                    rp.material = _meshMatOcc;
+                    Graphics.RenderMesh(rp, c.Mesh, c.Submesh, c.Matrix);
+                    _drawCalls++;
+                }
+
                 rp.matProps = null;
             }
         }
@@ -636,6 +789,10 @@ namespace RuntimeGizmos.Internal
         internal static bool Begin()
         {
             if (!Enabled) return false;
+
+            // Выключенная категория — это «не рисовать», а не «нарисовать и спрятать»:
+            // ни буферов, ни отметки о данных кадра, ни перерисовки в эдит-моде.
+            if ((Category & GizmoSettings.EnabledCategories) == 0) return false;
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // Запись идёт сырыми указателями в нативные буферы без всякой синхронизации,
@@ -1010,10 +1167,12 @@ namespace RuntimeGizmos.Internal
             if (!Begin() || tex == null) return;
 
             var id = GizmoObjectId.Of(tex);
-            var icons = Z == 0 ? _icons : _iconsTop;
+            // Призрачного набора у иконок нет: текстурный билборд, нарисованный дважды,
+            // читается хуже, чем один. Z = 2 для них равен обычному тесту глубины.
+            var icons = Z == 1 ? _iconsTop : _icons;
             if (!icons.TryGetValue(id, out var batch))
             {
-                batch = new GizmoTexturedBatch(tex, (Z == 0 ? "icon" : "iconTop") + id);
+                batch = new GizmoTexturedBatch(tex, (Z == 1 ? "iconTop" : "icon") + id);
                 icons[id] = batch;
             }
             batch.Texture = tex;

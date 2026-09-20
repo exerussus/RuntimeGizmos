@@ -14,6 +14,23 @@ namespace RuntimeGizmos
     /// <summary>Угол экрана для DrawScreenText.</summary>
     public enum GizmoCorner { TopLeft, TopRight, BottomLeft, BottomRight }
 
+    /// <summary>Как геометрия ведёт себя с буфером глубины.</summary>
+    public enum GizmoDepth
+    {
+        /// <summary>Обычный тест: то, что за геометрией сцены, не видно.</summary>
+        Test = 0,
+
+        /// <summary>Поверх всего, тест выключен.</summary>
+        Always = 1,
+
+        /// <summary>
+        /// Видимая часть рисуется как обычно, перекрытая — тем же цветом, приглушённая
+        /// в GizmoSettings.GhostAlpha раз. Читается и форма, и то, что она за стеной.
+        /// Стоит одного лишнего draw call на канал; вершины не дублируются.
+        /// </summary>
+        Ghost = 2,
+    }
+
     /// <summary>
     /// Полная замена UnityEngine.Gizmos, работающая и в билде, и в редакторе,
     /// и видимая через игровую камеру, а не только в Scene View.
@@ -76,12 +93,66 @@ namespace RuntimeGizmos
             set { GizmoRenderer.Width = value; GizmoRenderer.WidthIsDefault = false; }
         }
 
-        /// <summary>false — рисовать поверх всей геометрии (ZTest Always).</summary>
+        /// <summary>
+        /// false — рисовать поверх всей геометрии (ZTest Always).
+        /// Короткая запись для двух из трёх режимов <see cref="depth"/>; в режиме Ghost
+        /// геттер возвращает false, потому что перекрытое там всё-таки видно.
+        /// </summary>
         public static bool depthTest
         {
             get => GizmoRenderer.Z == 0;
             set => GizmoRenderer.Z = value ? 0 : 1;
         }
+
+        /// <summary>Поведение относительно буфера глубины, все три режима.</summary>
+        public static GizmoDepth depth
+        {
+            get => (GizmoDepth)GizmoRenderer.Z;
+            set => GizmoRenderer.Z = (uint)value <= (uint)GizmoDepth.Ghost ? (int)value : 0;
+        }
+
+        // ================================================================= категории
+
+        /// <summary>Категория, в которую попадает всё, что не сказало иного.</summary>
+        public const int DefaultCategory = 1;
+
+        /// <summary>
+        /// Маска категорий последующих вызовов. Категории — как слои: 32 бита, константы
+        /// объявляете у себя, имена для страницы настроек — в ассете.
+        ///
+        /// <code>
+        /// const int CatAI = 1 &lt;&lt; 1;
+        /// using (Gizmo.Category(CatAI)) agent.DrawPath(Color.cyan);
+        /// </code>
+        ///
+        /// Выключается категория через <see cref="GizmoSettings.EnabledCategories"/> —
+        /// вызов в выключенной категории не доходит до буферов и ничего не стоит,
+        /// кроме вычисления собственных аргументов.
+        /// </summary>
+        public static int category
+        {
+            get => GizmoRenderer.Category;
+            set => GizmoRenderer.Category = value;
+        }
+
+        /// <summary>Снимок всего состояния рисования с переключением категории.</summary>
+        public static GizmoScope Category(int categoryMask)
+        {
+            var s = new GizmoScope(true);
+            category = categoryMask;
+            return s;
+        }
+
+        // ================================================================= диагностика
+
+        /// <summary>
+        /// Чего стоила отрисовка в прошлом кадре: вершины, сабмиты, регистрации.
+        /// Считается на границе кадра, поэтому числа описывают ровно то, что увидели камеры.
+        /// </summary>
+        public static GizmoStats Stats => new GizmoStats(
+            GizmoRenderer.StatVertices, GizmoRenderer.StatRetained, GizmoRenderer.StatPeakChannel,
+            GizmoRenderer.StatDrawCalls, GizmoRenderer.StatMeshes, Registry.Count,
+            GizmoRenderer.StatOverflow);
 
         /// <summary>Время жизни в секундах. 0 — один кадр. Работает и при вызове из FixedUpdate/колбэков.</summary>
         public static float duration
@@ -131,6 +202,7 @@ namespace RuntimeGizmos
             matrix = Matrix4x4.identity;
             GizmoRenderer.Width = GizmoSettings.DefaultLineWidth;
             GizmoRenderer.WidthIsDefault = true;
+            GizmoRenderer.Category = DefaultCategory;
             depthTest = true;
             duration = 0f;
             GizmoRenderer.Dash = 0f;
@@ -160,6 +232,7 @@ namespace RuntimeGizmos
             readonly float _d;
             readonly float _dash;
             readonly float _dashRun;
+            readonly int _cat;
 
             internal GizmoScope(bool dummy)
             {
@@ -171,6 +244,7 @@ namespace RuntimeGizmos
                 this._d = GizmoRenderer.Duration;
                 this._dash = GizmoRenderer.Dash;
                 this._dashRun = GizmoRenderer.DashRun;
+                this._cat = GizmoRenderer.Category;
             }
 
             public void Dispose()
@@ -186,6 +260,7 @@ namespace RuntimeGizmos
                 GizmoRenderer.WidthIsDefault = _wDefault;
                 GizmoRenderer.Z = _z;
                 GizmoRenderer.Duration = _d;
+                GizmoRenderer.Category = _cat;
 
                 // Напрямую в поля, а не через Gizmo.dash: сеттер обнуляет фазу, а вернуть
                 // нужно и её — иначе у ломаной, прерванной scope, штрихи начнутся заново

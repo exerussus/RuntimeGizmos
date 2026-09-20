@@ -183,12 +183,19 @@ namespace UnityEngine {
   public class Texture : Object { public int width, height; }
   public class Texture2D : Texture { }
   public class Shader : Object { public bool isSupported=>Supported; public static bool Supported=true; public static bool Available=true;
-    public static Shader Find(string n)=>Available?new Shader{name=n}:null; public static int PropertyToID(string n)=>0; }
+    public static Shader Find(string n)=>Available?new Shader{name=n}:null;
+    // Настоящее отображение имени в id, а не ноль на всё: иначе значения всех свойств
+    // материала складываются в одну ячейку и проверить конкретное нельзя.
+    static readonly Dictionary<string,int> _ids = new Dictionary<string,int>();
+    public static int PropertyToID(string n){ if(!_ids.TryGetValue(n,out int id)){ id=_ids.Count+1; _ids[n]=id; } return id; } }
   public class Material : Object { public Material(Shader s){} public int renderQueue;
     // Счётчик нужен кейсам про глобальную альфу: она раскладывается по материалам
     // только при изменении, и проверить это можно лишь числом вызовов.
     public static int SetFloatCalls;
-    public void SetFloat(int id,float v){ SetFloatCalls++; } public void SetColor(int id,Color c){} public void SetTexture(int id,Texture t){} }
+    // Последнее значение по свойству: кейсам про альфу важно не только «сколько раз», но и «что».
+    public readonly Dictionary<int,float> Floats = new Dictionary<int,float>();
+    public float GetFloat(int id)=>Floats.TryGetValue(id,out float v)?v:float.NaN;
+    public void SetFloat(int id,float v){ SetFloatCalls++; Floats[id]=v; } public void SetColor(int id,Color c){} public void SetTexture(int id,Texture t){} }
   public class MaterialPropertyBlock { public void SetColor(int id,Color c){} public void SetTexture(int id,Texture t){} public void SetFloat(int id,float v){} public void Clear(){} }
   public class Mesh : Object { public Bounds bounds; public int subMeshCount; public int vertexCount;
     public Vector3[] vertices; public int[] triangles;
@@ -329,7 +336,8 @@ namespace UnityEngine {
   public static class GUI { public static GUISkin skin=new GUISkin();
     public static void Label(Rect r,string s){} public static void Box(Rect r,string s){} }
   public static class GUILayout { public static void BeginArea(Rect r, GUIStyle s=null){} public static void EndArea(){}
-    public static void Label(string s){} public static bool Button(string s)=>false; public static void Space(float f){} }
+    public static void Label(string s){} public static bool Button(string s)=>false; public static void Space(float f){}
+    public static bool Toggle(bool v,string s)=>v; }
 }
 
 // --- для расширений

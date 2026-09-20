@@ -160,6 +160,14 @@ namespace RuntimeGizmos
             public static float? GlobalAlpha { get => _GlobalAlpha; set { _GlobalAlpha = value; Invalidate(); } }
             static float? _GlobalAlpha;
 
+            /// <summary>Маска включённых категорий.</summary>
+            public static int? EnabledCategories { get => _EnabledCategories; set { _EnabledCategories = value; Invalidate(); } }
+            static int? _EnabledCategories;
+
+            /// <summary>Во сколько раз глушится перекрытая половина режима Ghost.</summary>
+            public static float? GhostAlpha { get => _GhostAlpha; set { _GhostAlpha = value; Invalidate(); } }
+            static float? _GhostAlpha;
+
             /// <summary>Толщина линии в пикселях, с которой стартует Gizmo.lineWidth и к которой возвращает Gizmo.Reset().</summary>
             public static float? DefaultLineWidth { get => _DefaultLineWidth; set { _DefaultLineWidth = value; Invalidate(); } }
             static float? _DefaultLineWidth;
@@ -221,6 +229,8 @@ namespace RuntimeGizmos
                 _Layer = null;
                 _RenderingLayerMask = null;
                 _GlobalAlpha = null;
+                _EnabledCategories = null;
+                _GhostAlpha = null;
                 _DefaultLineWidth = null;
                 _DepthBias = null;
                 _MaxVerticesPerChannel = null;
@@ -245,6 +255,8 @@ namespace RuntimeGizmos
                 if (_Layer.HasValue) c.Layer = _Layer.Value;
                 if (_RenderingLayerMask.HasValue) c.RenderingLayerMask = _RenderingLayerMask.Value;
                 if (_GlobalAlpha.HasValue) c.GlobalAlpha = _GlobalAlpha.Value;
+                if (_EnabledCategories.HasValue) c.EnabledCategories = _EnabledCategories.Value;
+                if (_GhostAlpha.HasValue) c.GhostAlpha = _GhostAlpha.Value;
                 if (_DefaultLineWidth.HasValue) c.DefaultLineWidth = _DefaultLineWidth.Value;
                 if (_DepthBias.HasValue) c.DepthBias = _DepthBias.Value;
                 if (_MaxVerticesPerChannel.HasValue) c.MaxVerticesPerChannel = _MaxVerticesPerChannel.Value;
@@ -295,6 +307,34 @@ namespace RuntimeGizmos
 
         /// <summary>Множитель альфы для всей отрисовки.</summary>
         public static float GlobalAlpha { get => Current.GlobalAlpha; set => Overrides.GlobalAlpha = value; }
+
+        /// <summary>
+        /// Маска включённых категорий. Вызов, чья категория сюда не попала, не рисуется.
+        /// Удобнее переключать через <see cref="SetCategory"/>.
+        /// </summary>
+        public static int EnabledCategories { get => Current.EnabledCategories; set => Overrides.EnabledCategories = value; }
+
+        /// <summary>Во сколько раз глушится перекрытая половина режима <see cref="GizmoDepth.Ghost"/>.</summary>
+        public static float GhostAlpha { get => Current.GhostAlpha; set => Overrides.GhostAlpha = value; }
+
+        /// <summary>Включена ли хотя бы одна категория из маски.</summary>
+        public static bool IsCategoryEnabled(int categoryMask) => (Current.EnabledCategories & categoryMask) != 0;
+
+        /// <summary>
+        /// Включить или выключить категории из маски, не трогая остальные.
+        /// Это то, что дёргает переключатель в рантайме или на странице настроек.
+        /// </summary>
+        public static void SetCategory(int categoryMask, bool enabled)
+        {
+            int mask = Current.EnabledCategories;
+            EnabledCategories = enabled ? mask | categoryMask : mask & ~categoryMask;
+        }
+
+        /// <summary>
+        /// Имя категории по номеру бита из ассета настроек, либо null. Нужно людям —
+        /// странице настроек и рантайм-оверлею; код работает с масками.
+        /// </summary>
+        public static string CategoryName(int bit) => Asset != null ? Asset.CategoryName(bit) : null;
 
         /// <summary>Толщина линии в пикселях, с которой стартует Gizmo.lineWidth и к которой возвращает Gizmo.Reset().</summary>
         public static float DefaultLineWidth { get => Current.DefaultLineWidth; set => Overrides.DefaultLineWidth = value; }

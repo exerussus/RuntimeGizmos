@@ -31,6 +31,7 @@ namespace RuntimeGizmosDemo
             Цвета,
             Паттерны,
             ЛенивaяОтладка,
+            КатегорииИСчётчики,
             Настройки,
             Нагрузка,
         }
@@ -103,6 +104,7 @@ namespace RuntimeGizmosDemo
                 case Section.Цвета:          Colors(o); break;
                 case Section.Паттерны:       Patterns(o); break;
                 case Section.ЛенивaяОтладка: Lazy(o); break;
+                case Section.КатегорииИСчётчики: Categories(o); break;
                 case Section.Настройки:      SettingsView(o); break;
                 case Section.Нагрузка:       Stress(o); break;
             }
@@ -199,10 +201,18 @@ namespace RuntimeGizmosDemo
             Gizmo.DrawWireSphere(o + Vector3.left * 1.2f, 1.2f);
             Gizmo.DrawText("depthTest = true", o + Vector3.left * 1.2f + Vector3.down * 1.6f, 13f);
 
-            Gizmo.depthTest = false;
+            Gizmo.depth = GizmoDepth.Always;
             Gizmo.color = Color.red;
             Gizmo.DrawWireSphere(o + Vector3.right * 1.2f, 1.2f);
-            Gizmo.DrawText("depthTest = false", o + Vector3.right * 1.2f + Vector3.down * 1.6f, 13f);
+            Gizmo.DrawText("depth = Always", o + Vector3.right * 1.2f + Vector3.down * 1.6f, 13f);
+
+            // Ради этого режима раздел и стоит смотреть с заслонкой: половина сферы за ней
+            // обязана остаться видимой, но приглушённой, а передняя — гореть в полную силу.
+            Gizmo.depth = GizmoDepth.Ghost;
+            Gizmo.color = Color.cyan;
+            Gizmo.DrawWireSphere(o + Vector3.up * 2.6f, 1.2f);
+            Gizmo.DrawText("depth = Ghost", o + Vector3.up * 2.6f + Vector3.down * 1.6f, 13f);
+            Gizmo.depth = GizmoDepth.Test;
 
             // Линия ровно по поверхности заслонки — здесь ловится z-файтинг.
             Gizmo.depthTest = true;
@@ -580,6 +590,50 @@ namespace RuntimeGizmosDemo
             GizmoLazy.Track(_lazyTargets[0]).Key("link").LinkTo(_lazyTargets[2], Color.green);
         }
 
+        /// <summary>
+        /// Категории и счётчики. Галочками ниже гасятся целые слои отладки, а табличка
+        /// показывает, чего стоит кадр: это те же Gizmo.Stats, только на экране.
+        /// </summary>
+        void Categories(Vector3 o)
+        {
+            Gizmo.lineWidth = 2f;
+
+            using (Gizmo.Category(CatShapes))
+            {
+                Gizmo.color = Color.green;
+                Gizmo.DrawWireSphere(o + Vector3.left * 2f, 1f);
+                Gizmo.DrawText("категория 1: формы", o + Vector3.left * 2f + Vector3.down * 1.4f, 13f);
+            }
+
+            using (Gizmo.Category(CatPaths))
+            {
+                Gizmo.color = Color.yellow;
+                float t = Time.realtimeSinceStartup;
+                var prev = o + Vector3.right * 2f;
+                for (int i = 1; i <= 24; i++)
+                {
+                    float a = t + i * 0.26f;
+                    var p = o + Vector3.right * 2f + new Vector3(Mathf.Cos(a), Mathf.Sin(a), 0f) * (i * 0.05f);
+                    Gizmo.DrawLine(prev, p);
+                    prev = p;
+                }
+                Gizmo.DrawText("категория 2: пути", o + Vector3.right * 2f + Vector3.down * 1.4f, 13f);
+            }
+
+            var t2 = Gizmo.Table(GizmoAnchor.TopLeft);
+            t2.Columns(GizmoTextAlign.Left, GizmoTextAlign.Right);
+            t2.Title("категории");
+            t2.Row("формы", GizmoSettings.IsCategoryEnabled(CatShapes));
+            t2.Row("пути", GizmoSettings.IsCategoryEnabled(CatPaths));
+
+            Gizmo.DrawStats();
+        }
+
+        // Константы категорий живут в коде проекта, как слои: имена для страницы настроек
+        // задаются в ассете по номеру бита.
+        const int CatShapes = 1 << 1;
+        const int CatPaths = 1 << 2;
+
         void SettingsView(Vector3 o)
         {
             Gizmo.color = Color.white;
@@ -635,6 +689,17 @@ namespace RuntimeGizmosDemo
             }
 
             GUILayout.Space(8f);
+            if (Current == Section.КатегорииИСчётчики)
+            {
+                // Переключатель категории — это одна строка: маска живёт в настройках,
+                // и её же читает страница Project Settings.
+                bool shapes = GUILayout.Toggle(GizmoSettings.IsCategoryEnabled(CatShapes), " формы");
+                GizmoSettings.SetCategory(CatShapes, shapes);
+
+                bool paths = GUILayout.Toggle(GizmoSettings.IsCategoryEnabled(CatPaths), " пути");
+                GizmoSettings.SetCategory(CatPaths, paths);
+            }
+
             if (Current == Section.Длительность && GUILayout.Button("Поставить метку на 3 с"))
             {
                 _durationStamp = Time.realtimeSinceStartup;

@@ -74,6 +74,7 @@ namespace RuntimeGizmos.Internal
         static readonly int[] _tblLastRow = new int[MaxTables];
         static readonly float[] _tblStroke = new float[MaxTables];
         static readonly byte[] _tblZ = new byte[MaxTables];
+        static readonly int[] _tblCategory = new int[MaxTables];
         static readonly bool[] _tblFixedCols = new bool[MaxTables];
         static int _tblCount;
 
@@ -202,6 +203,10 @@ namespace RuntimeGizmos.Internal
             // последнего вызова в кадре.
             _tblStroke[t] = GizmoRenderer.Width;
             _tblZ[t] = (byte)GizmoRenderer.Z;
+
+            // И категория: к границе кадра она принадлежит уже не тому, кто набирал блок,
+            // а Text() внутри Emit проходит ту же проверку, что и любой Draw*.
+            _tblCategory[t] = GizmoRenderer.Category;
 
             if (!implicitBlock) _implicitAt[(int)anchor] = -1;
 
@@ -359,6 +364,7 @@ namespace RuntimeGizmos.Internal
             float savedWidth = GizmoRenderer.Width;
             int savedZ = GizmoRenderer.Z;
             float savedDuration = GizmoRenderer.Duration;
+            int savedCategory = GizmoRenderer.Category;
 
             GizmoRenderer.Duration = 0f;   // HUD живёт ровно кадр, retained ему не нужен
 
@@ -368,9 +374,18 @@ namespace RuntimeGizmos.Internal
             GizmoRenderer.Width = savedWidth;
             GizmoRenderer.Z = savedZ;
             GizmoRenderer.Duration = savedDuration;
+            GizmoRenderer.Category = savedCategory;
 
             Reset();
         }
+
+        /// <summary>
+        /// Категорию блока могли выключить уже после того, как его набрали — со страницы
+        /// настроек или рантайм-оверлеем. Такой блок надо не просто не рисовать, а ещё и
+        /// не учитывать в высоте стопки: иначе на его месте останется дыра.
+        /// </summary>
+        static bool BlockEnabled(int table) =>
+            (_tblCategory[table] & GizmoSettings.EnabledCategories) != 0;
 
         static void FlushAnchor(int anchor)
         {
@@ -381,7 +396,7 @@ namespace RuntimeGizmos.Internal
 
             for (int t = 0; t < _tblCount; t++)
             {
-                if (_tblAnchor[t] != anchor) continue;
+                if (_tblAnchor[t] != anchor || !BlockEnabled(t)) continue;
                 Measure(t, out float h, out float slack, out _);
                 if (h <= 0f) continue;
                 total += h;
@@ -405,7 +420,7 @@ namespace RuntimeGizmos.Internal
 
             for (int t = 0; t < _tblCount; t++)
             {
-                if (_tblAnchor[t] != anchor) continue;
+                if (_tblAnchor[t] != anchor || !BlockEnabled(t)) continue;
                 Measure(t, out float h, out _, out float w);
                 if (h <= 0f) continue;
                 Emit(t, anchor, y, w);
@@ -516,6 +531,7 @@ namespace RuntimeGizmos.Internal
 
             GizmoRenderer.Width = _tblStroke[table];
             GizmoRenderer.Z = _tblZ[table];
+            GizmoRenderer.Category = _tblCategory[table];
             float y = top;
 
             for (int r = _tblFirstRow[table]; r >= 0; r = _rowNext[r])

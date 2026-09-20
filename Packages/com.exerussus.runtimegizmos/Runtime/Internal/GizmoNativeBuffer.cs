@@ -24,6 +24,7 @@ namespace RuntimeGizmos.Internal
         T* _sinkPtr;
         int _sinkCap;
         bool _overflowed;
+        bool _overflowedFrame;
 
         public Vector3 Min;
         public Vector3 Max;
@@ -75,6 +76,8 @@ namespace RuntimeGizmos.Internal
         [MethodImpl(MethodImplOptions.NoInlining)]
         T* Overflow(int count)
         {
+            _overflowedFrame = true;
+
             if (!_overflowed)
             {
                 _overflowed = true;
@@ -115,6 +118,18 @@ namespace RuntimeGizmos.Internal
         }
 
         public bool HasBounds => Min.x <= Max.x;
+
+        /// <summary>
+        /// Упирались в потолок с прошлого снятия. Отдельно от _overflowed: тот — защёлка
+        /// «предупредить в консоль один раз за сессию», а счётчикам нужен флаг за кадр,
+        /// иначе строка «переполнение» не исчезнет уже никогда.
+        /// </summary>
+        public bool ConsumeOverflow()
+        {
+            bool v = _overflowedFrame;
+            _overflowedFrame = false;
+            return v;
+        }
 
         public void SetCount(int c) => _count = c;
 

@@ -23,6 +23,18 @@ namespace RuntimeGizmos
         /// <summary>Множитель альфы для всей отрисовки.</summary>
         public float GlobalAlpha;
 
+        /// <summary>
+        /// Маска включённых категорий. Вызов, чья категория сюда не попала, не рисуется
+        /// и ничего не стоит. По умолчанию включены все 32.
+        /// </summary>
+        public int EnabledCategories;
+
+        /// <summary>
+        /// Во сколько раз глушится перекрытая половина режима GizmoDepth.Ghost.
+        /// Множится на GlobalAlpha, а не заменяет её.
+        /// </summary>
+        public float GhostAlpha;
+
         /// <summary>Толщина линии в пикселях, с которой стартует Gizmo.lineWidth и к которой возвращает Gizmo.Reset().</summary>
         public float DefaultLineWidth;
 
@@ -90,6 +102,7 @@ namespace RuntimeGizmos
         {
             Layer                 = Mathf.Clamp(Layer, 0, 31);
             GlobalAlpha           = Mathf.Clamp01(GlobalAlpha);
+            GhostAlpha            = Mathf.Clamp01(GhostAlpha);
             DefaultLineWidth      = Mathf.Max(0f, DefaultLineWidth);
             DepthBias             = Mathf.Max(0f, DepthBias);
             MaxVerticesPerChannel = Mathf.Max(0, MaxVerticesPerChannel);
@@ -114,6 +127,8 @@ namespace RuntimeGizmos
                 Layer              = 0,
                 RenderingLayerMask = uint.MaxValue,
                 GlobalAlpha        = 1f,
+                EnabledCategories  = ~0,
+                GhostAlpha         = 0.25f,
                 EditorStaleTimeout = 0.35f,
                 EditorAutoRepaint  = true,
                 EditorDriveUpdate  = true,

@@ -85,6 +85,22 @@ namespace RuntimeGizmos.Internal
         }
 
         public GizmoNativeBuffer<T> Back => _back;
+
+        /// <summary>Вершин в том, что уходит на отрисовку: снимок кадра плюс отложенное.</summary>
+        public int VertexCount => _front.Count + _retained.Count;
+
+        /// <summary>Из них отложенных (нарисованных с duration).</summary>
+        public int RetainedCount => _retained.Count;
+
+        /// <summary>Упирался ли канал в потолок MaxVerticesPerChannel с прошлого снятия.</summary>
+        public bool ConsumeOverflow()
+        {
+            // Без | вместо || : нужны все три вызова, каждый со своим сбросом.
+            bool a = _front.ConsumeOverflow();
+            bool b = _back.ConsumeOverflow();
+            bool c = _retained.ConsumeOverflow();
+            return a || b || c;
+        }
         public GizmoNativeBuffer<T> Retained => _retained;
         public GizmoNativeBuffer<float> RetainedExpiry => _retainedExpiry;
 

@@ -175,7 +175,8 @@ public static class Tests
             Boot();
             GizmoRenderer.Ensure();
             var ch = Priv<GizmoChannel<GizmoTextVertex>[]>(typeof(GizmoRenderer), "_text");
-            Check("C0 текстовый канал создан", ch != null && ch.Length == 2);
+            // Слоёв три: с тестом глубины, поверх всего и призрачный.
+            Check("C0 текстовый канал создан", ch != null && ch.Length == GizmoRenderer.ZCount);
 
             int Verts() => ch[0].Target(false).Count;
             int before = Verts();
@@ -2105,7 +2106,8 @@ public static class Tests
             Tick(13000.032f);
             Material.SetFloatCalls = 0;
             GizmoRenderer.Submit(camA);
-            Check("AA2 изменение альфы раскладывается по десяти материалам", Material.SetFloatCalls == 10,
+            // 5 видов геометрии на 3 слоя глубины плюс 5 материалов перекрытой половины призрака.
+            Check("AA2 изменение альфы раскладывается по двадцати материалам", Material.SetFloatCalls == 20,
                   "вызовов=" + Material.SetFloatCalls);
 
             Material.SetFloatCalls = 0;
@@ -2120,7 +2122,7 @@ public static class Tests
             Material.SetFloatCalls = 0;
             GizmoRenderer.Submit(camA);
             Check("AA4 после пересоздания материалов альфа применяется заново",
-                  Material.SetFloatCalls == 10, "вызовов=" + Material.SetFloatCalls);
+                  Material.SetFloatCalls == 20, "вызовов=" + Material.SetFloatCalls);
 
             GizmoSettings.ResetOverrides();
         }
@@ -2481,6 +2483,314 @@ public static class Tests
             thinAc[0].Prepare(out _, out var infBounds);
             Check("AC34 бесконечная вершина не даёт бесконечных bounds",
                   !float.IsInfinity(infBounds.size.x) && !float.IsNaN(infBounds.size.x), "" + infBounds.size.x);
+        }
+
+        // ==================================================== AD. категории, призрак, счётчики
+        Group("AD. Категории, призрак и счётчики");
+        {
+            const int CatAI = 1 << 1;
+            const int CatPhys = 1 << 2;
+
+            var cam = new Camera { cameraType = CameraType.Game }; cam.transform = new Transform();
+
+            // --- категории
+            Boot(); GizmoRenderer.Ensure(); Gizmo.lineWidth = 1f;
+            var thinAd = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            int Verts0() => thinAd[0].Target(false).Count;
+
+            Check("AD1 по умолчанию категория одна и включена",
+                  Gizmo.category == Gizmo.DefaultCategory && GizmoSettings.IsCategoryEnabled(Gizmo.DefaultCategory));
+
+            thinAd[0].Clear();
+            using (Gizmo.Category(CatAI)) Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Check("AD2 включённая категория рисует", Verts0() == 2, "" + Verts0());
+            Check("AD3 Scope вернул категорию", Gizmo.category == Gizmo.DefaultCategory);
+
+            GizmoSettings.SetCategory(CatAI, false);
+            thinAd[0].Clear();
+            GizmoRenderer.HasProducedData = false;
+            using (Gizmo.Category(CatAI)) Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Check("AD4 выключенная категория не рисует", Verts0() == 0, "" + Verts0());
+            Check("AD5 и не считается данными кадра", !GizmoRenderer.HasProducedData);
+            Check("AD6 соседняя категория не задета", GizmoSettings.IsCategoryEnabled(CatPhys));
+
+            thinAd[0].Clear();
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Check("AD7 категория по умолчанию рисует по-прежнему", Verts0() == 2, "" + Verts0());
+
+            GizmoSettings.SetCategory(CatAI, true);
+            thinAd[0].Clear();
+            using (Gizmo.Category(CatAI)) Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Check("AD8 включили обратно — рисует", Verts0() == 2, "" + Verts0());
+
+            using (Gizmo.Category(CatAI))
+            {
+                using (Gizmo.Category(CatPhys)) Check("AD9 вложенный Scope ставит свою", Gizmo.category == CatPhys);
+                Check("AD10 и возвращает внешнюю", Gizmo.category == CatAI);
+            }
+
+            Gizmo.category = CatPhys;
+            Gizmo.Reset();
+            Check("AD11 Reset возвращает категорию по умолчанию", Gizmo.category == Gizmo.DefaultCategory);
+
+            // --- категории и экранная раскладка
+            Boot(); GizmoRenderer.Ensure();
+            var txtAd = Priv<GizmoChannel<GizmoTextVertex>[]>(typeof(GizmoRenderer), "_text");
+
+            GizmoSettings.SetCategory(CatAI, false);
+            using (Gizmo.Category(CatAI))
+            {
+                var off = Gizmo.Table(GizmoAnchor.TopLeft);
+                Check("AD12 таблица в выключенной категории не создаётся", !off.IsValid);
+                Gizmo.DrawScreenText("нет", GizmoCorner.TopLeft);
+            }
+            txtAd[0].Clear();
+            GizmoHud.Flush();
+            Check("AD13 и на экран ничего не выпускает", txtAd[0].Target(false).Count == 0);
+            GizmoSettings.SetCategory(CatAI, true);
+
+            // Блок набран в своей категории, а к границе кадра текущая — другая и выключенная.
+            // Рисоваться он обязан: категория снимается вместе со штрихом, один раз на блок.
+            using (Gizmo.Category(CatAI))
+            {
+                var tb = Gizmo.Table(GizmoAnchor.TopLeft);
+                tb.Row("hp", 100);
+            }
+            Gizmo.category = CatPhys;
+            GizmoSettings.SetCategory(CatPhys, false);
+            txtAd[0].Clear();
+            GizmoHud.Flush();
+            Check("AD14 блок рисуется своей категорией, а не текущей", txtAd[0].Target(false).Count > 0,
+                  "" + txtAd[0].Target(false).Count);
+            Check("AD15 Flush вернул категорию кадра", Gizmo.category == CatPhys);
+            GizmoSettings.SetCategory(CatPhys, true);
+            Gizmo.Reset();
+
+            // --- категории и GizmoLazy
+            Boot(); GizmoRenderer.Ensure(); Gizmo.lineWidth = 1f;
+            thinAd = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            var lazyGo = new GameObject();
+            using (Gizmo.Category(CatAI)) GizmoLazy.Track(lazyGo.transform).Axes();
+
+            thinAd[0].Clear();
+            Registry.Tick();
+            int inCat = thinAd[0].Target(false).Count;
+            GizmoSettings.SetCategory(CatAI, false);
+            thinAd[0].Clear();
+            Registry.Tick();
+            Check("AD16 запись помнит категорию регистрации", inCat > 0 && thinAd[0].Target(false).Count == 0,
+                  inCat + " → " + thinAd[0].Target(false).Count);
+            Check("AD17 и не снимается, пока категория выключена", Registry.Count == 1, "" + Registry.Count);
+            GizmoSettings.SetCategory(CatAI, true);
+            thinAd[0].Clear();
+            Registry.Tick();
+            Check("AD18 включили — рисует снова", thinAd[0].Target(false).Count == inCat);
+            GizmoLazy.Clear();
+
+            // --- призрак
+            Boot(); GizmoRenderer.Ensure(); Gizmo.lineWidth = 1f;
+            thinAd = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            Check("AD19 слоёв глубины три", thinAd.Length == 3);
+
+            Gizmo.depth = GizmoDepth.Ghost;
+            Check("AD20 depth ставит третий слой", GizmoRenderer.Z == GizmoRenderer.ZGhost);
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Check("AD21 призрак пишет в свой канал",
+                  thinAd[2].Target(false).Count == 2 && thinAd[0].Target(false).Count == 0,
+                  thinAd[0].Target(false).Count + "/" + thinAd[2].Target(false).Count);
+
+            Tick(1f);
+            Graphics.Calls = 0;
+            GizmoRenderer.Submit(cam);
+            int ghostCalls = Graphics.Calls;
+            Check("AD22 призрачный канал уходит двумя сабмитами", ghostCalls == 2, "" + ghostCalls);
+
+            Boot(); GizmoRenderer.Ensure(); Gizmo.lineWidth = 1f;
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Tick(1f);
+            Graphics.Calls = 0;
+            GizmoRenderer.Submit(cam);
+            Check("AD23 обычный — одним", Graphics.Calls == 1, "" + Graphics.Calls);
+
+            Gizmo.depth = GizmoDepth.Always;
+            Check("AD24 depthTest и depth согласованы", !Gizmo.depthTest && GizmoRenderer.Z == 1);
+            Gizmo.depthTest = true;
+            Check("AD25 и обратно", Gizmo.depth == GizmoDepth.Test);
+            Gizmo.depth = (GizmoDepth)7;
+            Check("AD26 неизвестный режим падает в обычный", Gizmo.depth == GizmoDepth.Test);
+
+            using (Gizmo.Scope()) Gizmo.depth = GizmoDepth.Ghost;
+            Check("AD27 Scope возвращает режим глубины", Gizmo.depth == GizmoDepth.Test);
+
+            // альфа перекрытой половины — произведение глобальной на призрачную
+            GizmoSettings.GlobalAlpha = 0.5f;
+            GizmoSettings.GhostAlpha = 0.2f;
+            GizmoRenderer.Submit(cam);
+            int alphaId = Shader.PropertyToID("_Alpha");
+            var occMat = Priv<Material>(typeof(GizmoRenderer), "_thinMatOcc");
+            var normMat = Priv<Material[]>(typeof(GizmoRenderer), "_thinMat");
+            Check("AD28 перекрытая половина глушится поверх глобальной альфы",
+                  Math.Abs(occMat.GetFloat(alphaId) - 0.1f) < 1e-6f, "" + occMat.GetFloat(alphaId));
+            Check("AD29 обычные материалы берут только глобальную",
+                  Math.Abs(normMat[2].GetFloat(alphaId) - 0.5f) < 1e-6f, "" + normMat[2].GetFloat(alphaId));
+            GizmoSettings.ResetOverrides();
+
+            // меш и иконка в призраке
+            Boot(); GizmoRenderer.Ensure();
+            var ghostMesh = new Mesh { name = "ghost", subMeshCount = 1 };
+            Gizmo.depth = GizmoDepth.Ghost;
+            Gizmo.DrawMesh(ghostMesh, Vector3.zero);
+            Tick(2f);
+            Graphics.Calls = 0;
+            GizmoRenderer.Submit(cam);
+            Check("AD30 меш в призраке рисуется дважды", Graphics.Calls == 2, "" + Graphics.Calls);
+
+            var ghostTex = new Texture2D { name = "ghostIcon" };
+            Gizmo.DrawIcon(Vector3.zero, ghostTex);
+            var icoD = Priv<Dictionary<GizmoObjectId, GizmoTexturedBatch>>(typeof(GizmoRenderer), "_icons");
+            var icoT = Priv<Dictionary<GizmoObjectId, GizmoTexturedBatch>>(typeof(GizmoRenderer), "_iconsTop");
+            Check("AD31 иконка в призраке идёт в обычный набор", icoD.Count == 1 && icoT.Count == 0,
+                  icoD.Count + "/" + icoT.Count);
+            Gizmo.Reset();
+
+            // --- счётчики
+            Boot(); GizmoRenderer.Ensure(); Gizmo.lineWidth = 1f;
+            for (int i = 0; i < 10; i++) Gizmo.DrawLine(Vector3.zero, new Vector3(i, 1, 0));
+            Gizmo.duration = 5f;
+            for (int i = 0; i < 4; i++) Gizmo.DrawLine(Vector3.zero, new Vector3(i, 2, 0));
+            Gizmo.duration = 0f;
+            Tick(3f);
+            var st = Gizmo.Stats;
+            Check("AD32 вершины посчитаны", st.Vertices == 28, "" + st.Vertices);
+            Check("AD33 отложенные отдельно", st.RetainedVertices == 8, "" + st.RetainedVertices);
+            Check("AD34 пик по каналу", st.PeakChannelVertices == 28, "" + st.PeakChannelVertices);
+
+            Graphics.Calls = 0;
+            GizmoRenderer.Submit(cam);
+            Check("AD35 сабмиты на камеру", Gizmo.Stats.DrawCalls == Graphics.Calls && Graphics.Calls == 1,
+                  Gizmo.Stats.DrawCalls + "/" + Graphics.Calls);
+
+            var statMesh = new Mesh { name = "stat", subMeshCount = 1 };
+            Gizmo.DrawMesh(statMesh, Vector3.zero);
+            Tick(4f);
+            Check("AD36 меши посчитаны", Gizmo.Stats.Meshes == 1, "" + Gizmo.Stats.Meshes);
+
+            var statGo = new GameObject();
+            GizmoLazy.Track(statGo.transform).Axes();
+            Check("AD37 регистрации видны в счётчиках", Gizmo.Stats.Tracked == Registry.Count && Registry.Count == 1);
+            GizmoLazy.Clear();
+
+            Check("AD38 переполнения не было", !Gizmo.Stats.Overflowed);
+            // Потолок проверяется только при РОСТЕ буфера, поэтому рисуем заведомо больше
+            // стартовой ёмкости канала (2048 вершин), а не больше самого потолка.
+            GizmoSettings.MaxVerticesPerChannel = 64;
+            for (int i = 0; i < 2000; i++) Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Tick(5f);
+            Check("AD39 переполнение видно в счётчиках", Gizmo.Stats.Overflowed);
+            GizmoSettings.ResetOverrides();
+
+            // --- табличка со счётчиками
+            Boot(); GizmoRenderer.Ensure();
+            txtAd = Priv<GizmoChannel<GizmoTextVertex>[]>(typeof(GizmoRenderer), "_text");
+            Gizmo.DrawStats(GizmoAnchor.BottomRight);
+            txtAd[0].Clear();
+            GizmoHud.Flush();
+            Check("AD40 DrawStats выпускает таблицу на экран", txtAd[0].Target(false).Count > 0,
+                  "" + txtAd[0].Target(false).Count);
+            Throws("AD41 DrawStats до подъёма рендерера не бросает", () =>
+            {
+                GizmoRenderer.Dispose();
+                Gizmo.DrawStats();
+                Tick(6f);
+            }, false);
+        }
+
+        // ==================================================== AE. доводка 1.6.0
+        Group("AE. Доводка категорий, призрака и счётчиков");
+        {
+            const int CatA = 1 << 3;
+            var cam = new Camera { cameraType = CameraType.Game }; cam.transform = new Transform();
+
+            // --- выключенная категория не исполняет тело ленивой записи
+            Boot(); GizmoRenderer.Ensure();
+            var goAe = new GameObject();
+            int calls = 0;
+            using (Gizmo.Category(CatA)) GizmoLazy.Track(goAe.transform).Draw(() => calls++);
+
+            Registry.Tick();
+            int afterOn = calls;
+            GizmoSettings.SetCategory(CatA, false);
+            Registry.Tick(); Registry.Tick();
+            Check("AE1 выключенная категория не зовёт колбэк записи", afterOn == 1 && calls == 1,
+                  afterOn + "/" + calls);
+            Check("AE2 но запись остаётся в реестре", Registry.Count == 1, "" + Registry.Count);
+
+            GizmoSettings.SetCategory(CatA, true);
+            Registry.Tick();
+            Check("AE3 включили — тело снова исполняется", calls == 2, "" + calls);
+            GizmoLazy.Clear();
+
+            // --- переполнение видно ровно в своём кадре
+            Boot(); GizmoRenderer.Ensure(); Gizmo.lineWidth = 1f;
+            GizmoSettings.MaxVerticesPerChannel = 64;
+            for (int i = 0; i < 2000; i++) Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Tick(1f);
+            bool spike = Gizmo.Stats.Overflowed;
+            GizmoSettings.ResetOverrides();
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Tick(1.1f);
+            Check("AE4 флаг переполнения гаснет на спокойном кадре", spike && !Gizmo.Stats.Overflowed);
+
+            // --- призрак: обе половины тестируются против одного буфера
+            Boot(); GizmoRenderer.Ensure();
+            int zwriteId = Shader.PropertyToID("_ZWriteMode");
+            var triMats = Priv<Material[]>(typeof(GizmoRenderer), "_triMat");
+            var triOcc = Priv<Material>(typeof(GizmoRenderer), "_triMatOcc");
+            Check("AE5 сплошной призрак не пишет в буфер глубины",
+                  triMats[0].GetFloat(zwriteId) == 1f && triMats[2].GetFloat(zwriteId) == 0f
+                  && triOcc.GetFloat(zwriteId) == 0f,
+                  triMats[0].GetFloat(zwriteId) + "/" + triMats[2].GetFloat(zwriteId) + "/" + triOcc.GetFloat(zwriteId));
+
+            var thinMats = Priv<Material[]>(typeof(GizmoRenderer), "_thinMat");
+            var thinOcc = Priv<Material>(typeof(GizmoRenderer), "_thinMatOcc");
+            Check("AE6 у призрака своя очередь, а половины в одной",
+                  thinMats[2].renderQueue != thinMats[0].renderQueue
+                  && thinMats[2].renderQueue != thinMats[1].renderQueue
+                  && thinOcc.renderQueue == thinMats[2].renderQueue,
+                  thinMats[0].renderQueue + "/" + thinMats[1].renderQueue + "/" +
+                  thinMats[2].renderQueue + "/" + thinOcc.renderQueue);
+
+            // --- блок, чья категория выключилась после набора, не оставляет дыры
+            Boot(); GizmoRenderer.Ensure();
+            var txtAe = Priv<GizmoChannel<GizmoTextVertex>[]>(typeof(GizmoRenderer), "_text");
+
+            float TopY()
+            {
+                var b = txtAe[0].Target(false);
+                float m = float.MaxValue;
+                unsafe { for (int i = 0; i < b.Count; i++) m = Math.Min(m, b.Ptr[i].Position.y); }
+                return m;
+            }
+
+            var solo = Gizmo.Table(GizmoAnchor.TopLeft);
+            solo.Row("вторая", 2);
+            txtAe[0].Clear();
+            GizmoHud.Flush();
+            float aloneY = TopY();
+
+            using (Gizmo.Category(CatA))
+            {
+                var hidden = Gizmo.Table(GizmoAnchor.TopLeft);
+                hidden.Row("первая", 1);
+            }
+            var second = Gizmo.Table(GizmoAnchor.TopLeft);
+            second.Row("вторая", 2);
+            GizmoSettings.SetCategory(CatA, false);
+            txtAe[0].Clear();
+            GizmoHud.Flush();
+            Check("AE7 выключенный блок не занимает места в стопке",
+                  Math.Abs(TopY() - aloneY) < 1e-4f, TopY() + " против " + aloneY);
+            GizmoSettings.SetCategory(CatA, true);
         }
 
         Console.WriteLine("\n═══════════════════════════════════");

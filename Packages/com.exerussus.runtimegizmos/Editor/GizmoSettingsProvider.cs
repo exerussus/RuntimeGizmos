@@ -87,6 +87,8 @@ namespace RuntimeGizmos.EditorTools
                 EditorGUILayout.Space();
                 DrawAsset();
                 EditorGUILayout.Space();
+                DrawCategories();
+                EditorGUILayout.Space();
                 DrawPlatform();
                 EditorGUILayout.Space();
                 DrawDiagnostics();
@@ -95,6 +97,56 @@ namespace RuntimeGizmos.EditorTools
             {
                 EditorGUIUtility.labelWidth = labelWidth;
             }
+        }
+
+        // ==================================================================== категории
+
+        /// <summary>
+        /// Переключатели категорий. Это оверрайд сессии, а не правка ассета: выключил,
+        /// посмотрел на сцену без чужой отладки, вернул. В билд ничего не уезжает.
+        ///
+        /// Показываются только именованные категории — имена лежат в ассете, в разделе
+        /// «Имена категорий». Безымянных 32 штуки, и рисовать их все было бы стеной галочек;
+        /// для них внизу маска целиком.
+        /// </summary>
+        void DrawCategories()
+        {
+            EditorGUILayout.LabelField("Категории", EditorStyles.boldLabel);
+
+            int mask = GizmoSettings.EnabledCategories;
+            int named = 0;
+
+            for (int bit = 0; bit < 32; bit++)
+            {
+                string name = GizmoSettings.CategoryName(bit);
+                if (name == null && bit != 0) continue;
+                if (bit == 0 && name == null) name = "по умолчанию";
+                named++;
+
+                int flag = 1 << bit;
+                bool on = (mask & flag) != 0;
+                bool next = EditorGUILayout.ToggleLeft($"{bit}. {name}", on);
+                if (next != on) GizmoSettings.SetCategory(flag, next);
+            }
+
+            if (named <= 1)
+                EditorGUILayout.HelpBox(
+                    "Имена категорий задаются в ассете настроек: индекс в массиве — номер бита, " +
+                    "а в коде рядом держите свои константы (const int CatAI = 1 << 1). " +
+                    "Без имён категории всё равно работают — переключайте их маской ниже.",
+                    MessageType.None);
+
+            EditorGUILayout.HelpBox(
+                "Это оверрайд сессии: на входе в Play Mode и на выходе он сбрасывается, как и " +
+                "остальные значения, выставленные из кода. Чтобы категория была выключена всегда, " +
+                "отметьте её в ассете, в поле «Маска выключенных категорий».",
+                MessageType.None);
+
+            int raw = EditorGUILayout.IntField("Маска целиком", GizmoSettings.EnabledCategories);
+            if (raw != GizmoSettings.EnabledCategories) GizmoSettings.EnabledCategories = raw;
+
+            if (GizmoSettings.EnabledCategories != ~0 &&
+                GUILayout.Button("Включить все")) GizmoSettings.EnabledCategories = ~0;
         }
 
         // ==================================================================== ассет
@@ -225,6 +277,26 @@ namespace RuntimeGizmos.EditorTools
                 : since.ToString("F2") + " с назад, таймаут " + GizmoSettings.EditorStaleTimeout.ToString("F2") + " с");
 
             EditorGUILayout.LabelField("Живых регистраций GizmoLazy", Registry.Count.ToString());
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Стоимость прошлого кадра", EditorStyles.boldLabel);
+
+            var stats = Gizmo.Stats;
+            EditorGUILayout.LabelField("Вершин", stats.Vertices + ", из них отложенных " + stats.RetainedVertices);
+
+            // Без «X из Y»: потолок проверяется при РОСТЕ буфера и отдельно для кадрового
+            // и отложенного, а пик — их сумма. Сравнивать эти два числа напрямую нельзя.
+            int budget = GizmoSettings.MaxVerticesPerChannel;
+            EditorGUILayout.LabelField("Пик на канал", stats.PeakChannelVertices.ToString());
+            EditorGUILayout.LabelField("Потолок роста буфера", budget > 0 ? budget.ToString() : "снят");
+
+            EditorGUILayout.LabelField("Сабмитов на камеру", stats.DrawCalls + ", мешей " + stats.Meshes);
+
+            if (stats.Overflowed)
+                EditorGUILayout.HelpBox(
+                    "Канал упирался в потолок MaxVerticesPerChannel, часть геометрии не нарисована. " +
+                    "Либо поднимите потолок, либо сократите вызовы.",
+                    MessageType.Warning);
         }
     }
 }

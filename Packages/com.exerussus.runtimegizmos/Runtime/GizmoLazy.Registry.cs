@@ -21,6 +21,7 @@ namespace RuntimeGizmos
             public GizmoLazyKind Kind;
 
             public float Expiry;
+            public int Category;
             public Color Color;
             public float A, B;      // числовые параметры команды
             public string Text;
@@ -85,6 +86,11 @@ namespace RuntimeGizmos
             e.Line = line;
             e.Kind = kind;
             e.Expiry = src.Expiry;
+
+            // Категория снимается в момент регистрации: `using (Gizmo.Category(x))` вокруг
+            // Track(...) — и запись будет рисоваться в этой категории, а не в той, что
+            // случайно окажется текущей на границе кадра.
+            e.Category = Internal.GizmoRenderer.Category;
             e.Color = color;
             e.A = a; e.B = b;
             e.Text = text;
@@ -195,8 +201,17 @@ namespace RuntimeGizmos
                     var e = _entries[i];
                     if (Dead(in e, now)) { _needSweep = true; continue; }
 
+                    // Категорию проверяем ЗДЕСЬ, а не полагаемся на Begin() внутри примитивов:
+                    // тело записи — это Volume() с GetComponentsInChildren, Label с форматированием
+                    // и пользовательская лямбда. Проверка на уровне вершины выключила бы только
+                    // заливку буфера, оставив всю дорогую часть.
+                    //
+                    // Запись при этом остаётся в реестре: категорию включат — она снова нарисуется.
+                    if ((e.Category & GizmoSettings.EnabledCategories) == 0) continue;
+
                     // Чистое состояние на запись: иначе порядок регистраций стал бы значимым.
                     Gizmo.ResetState();
+                    Internal.GizmoRenderer.Category = e.Category;
 
                     try
                     {

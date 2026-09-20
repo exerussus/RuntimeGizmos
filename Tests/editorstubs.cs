@@ -57,7 +57,9 @@ namespace UnityEditor {
     public static void LabelField(string a,GUIStyle s){}
     public static void HelpBox(string m, MessageType t){}
     public static void PropertyField(SerializedProperty p, GUIContent l, bool inc=false){}
-    public static int Popup(string label,int i,string[] opts)=>i; }
+    public static int Popup(string label,int i,string[] opts)=>i;
+    public static bool ToggleLeft(string label,bool v)=>v;
+    public static int IntField(string label,int v)=>v; }
   public static class EditorGUI {
     public static void BeginProperty(Rect r, GUIContent l, SerializedProperty p){}
     public static void EndProperty(){}

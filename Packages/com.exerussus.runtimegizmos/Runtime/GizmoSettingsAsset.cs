@@ -44,6 +44,8 @@ namespace RuntimeGizmos
         [Tooltip("Слой геометрии. Учитывается culling mask камеры.")] public GizmoOptionalInt Layer;
         [Tooltip("Rendering layer mask, с которым уходит геометрия.")] public GizmoOptionalUInt RenderingLayerMask;
         [Tooltip("Множитель альфы для всей отрисовки.")] public GizmoOptionalFloat GlobalAlpha;
+        [Tooltip("Маска ВЫКЛЮЧЕННЫХ категорий: бит на категорию, ноль — не выключена ни одна.")] public GizmoOptionalInt DisabledCategories;
+        [Tooltip("Во сколько раз глушится перекрытая половина режима Ghost.")] public GizmoOptionalFloat GhostAlpha;
         [Tooltip("Толщина линии в пикселях, с которой стартует Gizmo.lineWidth и к которой возвращает Gizmo.Reset().")] public GizmoOptionalFloat DefaultLineWidth;
         [Tooltip("Сдвиг глубины к камере (в единицах NDC) для линий с тестом глубины.")] public GizmoOptionalFloat DepthBias;
         [Tooltip("Потолок роста вершинного буфера на канал. 0 — без ограничения.")] public GizmoOptionalInt MaxVerticesPerChannel;
@@ -66,6 +68,11 @@ namespace RuntimeGizmos
             if (Layer.Use) c.Layer = Layer.Value;
             if (RenderingLayerMask.Use) c.RenderingLayerMask = RenderingLayerMask.Value;
             if (GlobalAlpha.Use) c.GlobalAlpha = GlobalAlpha.Value;
+            // Инверсия, а не маска включённых: Unity сериализует int нулём, и у поля
+            // «включённые» безопасное состояние совпало бы с «ни одной» — галочка,
+            // поставленная из любопытства, тихо гасила бы пакет целиком, в том числе в билде.
+            if (DisabledCategories.Use) c.EnabledCategories &= ~DisabledCategories.Value;
+            if (GhostAlpha.Use) c.GhostAlpha = GhostAlpha.Value;
             if (DefaultLineWidth.Use) c.DefaultLineWidth = DefaultLineWidth.Value;
             if (DepthBias.Use) c.DepthBias = DepthBias.Value;
             if (MaxVerticesPerChannel.Use) c.MaxVerticesPerChannel = MaxVerticesPerChannel.Value;
@@ -97,6 +104,21 @@ namespace RuntimeGizmos
         {
             public GizmoPlatform Platform;
             public GizmoConfigLayer Layer = new GizmoConfigLayer();
+        }
+
+        /// <summary>
+        /// Имена категорий по номеру бита. Нужны только людям: странице настроек и
+        /// оверлею в билде. Код пользуется своими константами, как со слоями Unity.
+        /// </summary>
+        [Header("Имена категорий (индекс = номер бита)")]
+        [SerializeField] string[] _categoryNames = Array.Empty<string>();
+
+        /// <summary>Имя категории по номеру бита или null.</summary>
+        internal string CategoryName(int bit)
+        {
+            if (_categoryNames == null || (uint)bit >= (uint)_categoryNames.Length) return null;
+            var n = _categoryNames[bit];
+            return string.IsNullOrEmpty(n) ? null : n;
         }
 
         [Header("Общие переопределения")]

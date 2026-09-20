@@ -45,6 +45,30 @@ namespace RuntimeGizmos
         }
 
         /// <summary>
+        /// Табличка со стоимостью отрисовки: вершины, сабмиты, меши, регистрации.
+        /// Это тот же <see cref="Stats"/>, только уже на экране.
+        ///
+        /// Сама себя тоже считает: строки таблицы — это вершины текстового канала, поэтому
+        /// в следующем кадре они войдут в «вершин». Числа и так о прошлом кадре.
+        /// </summary>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawStats(GizmoAnchor anchor = GizmoAnchor.BottomRight, float sizePixels = 12f)
+        {
+            var s = Stats;
+
+            var t = Table(anchor, sizePixels);
+            t.Columns(GizmoTextAlign.Left, GizmoTextAlign.Right);
+            t.Title("gizmos");
+            t.Row("вершин", s.Vertices);
+            t.Row("из них retained", s.RetainedVertices);
+            t.Row("пик на канал", s.PeakChannelVertices);
+            t.Row("draw calls", s.DrawCalls);
+            t.Row("мешей", s.Meshes);
+            t.Row("регистраций", s.Tracked);
+            if (s.Overflowed) t.Row("переполнение", "да");
+        }
+
+        /// <summary>
         /// Надпись у произвольного якоря, а не только у угла. Строки на одном якоре
         /// укладываются стопкой автоматически, счётчик сбрасывается на границе кадра.
         /// </summary>
