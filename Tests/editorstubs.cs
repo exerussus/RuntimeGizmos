@@ -9,7 +9,7 @@
 using System; using UnityEngine;
 namespace UnityEditor {
   public enum PlayModeStateChange { EnteredEditMode, ExitingEditMode, EnteredPlayMode, ExitingPlayMode }
-  public static class EditorApplication { public static event Action update; public static event Action<PlayModeStateChange> playModeStateChanged;
+  public static class EditorApplication { public static event Action update; public static event Action projectChanged; public static event Action<PlayModeStateChange> playModeStateChanged;
     public static bool isPlaying=>false;
     public static bool isFocused=true;
     // Счётчик вместо самого тика: харнессу важно, просит ли пакет редактор крутить player loop.

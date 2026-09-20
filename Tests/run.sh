@@ -78,14 +78,30 @@ SRC=$(find ../Packages/com.exerussus.runtimegizmos/Runtime -name '*.cs')
 DEMO=$(find ../Packages/com.exerussus.runtimegizmos.demo/Runtime -name '*.cs')
 NW=CS0067,CS0414,CS0169,CS0649,CS0436,CS0219,CS8321
 
+# Символы, которые в Unity выставляет versionDefines из RuntimeGizmos.asmdef по наличию
+# встроенных модулей. Харнесс asmdef не читает, поэтому включает их сам — иначе расширения
+# физики и звука просто не попали бы в сборку.
+MOD="RG_PHYSICS;RG_PHYSICS2D;RG_AUDIO;RG_VR;RG_XR"
+
 echo "   SDK $SDKVER   $SDKDIR"
 
 # ------------------------------------------------------------------ проверки
 
 echo "-- компиляция во всех конфигурациях"
-for D in NONE DEVELOPMENT_BUILD UNITY_EDITOR RUNTIME_GIZMOS_ALWAYS "UNITY_EDITOR;DEVELOPMENT_BUILD" UNITY_6000_5_OR_NEWER "UNITY_EDITOR;UNITY_6000_5_OR_NEWER"; do
+for D in NONE DEVELOPMENT_BUILD UNITY_EDITOR RUNTIME_GIZMOS_ALWAYS "UNITY_EDITOR;DEVELOPMENT_BUILD" UNITY_6000_5_OR_NEWER "UNITY_EDITOR;UNITY_6000_5_OR_NEWER" ENABLE_VR; do
   EX=""; case "$D" in *UNITY_EDITOR*) EX=editorstubs.cs;; esac
   printf "   %-40s" "$([ "$D" = NONE ] && echo "<плеер, release>" || echo "$D")"
+  OUT=$(csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW \
+        -define:"$MOD;$D" "${REFS[@]}" -out:"$B/rgchk.dll" stubs.cs $EX $SRC 2>&1) || true
+  if [ -z "$OUT" ]; then echo "ok"; else echo "ОШИБКА"; echo "$OUT"; exit 1; fi
+done
+
+# Проект с выключенными модулями Physics / Physics 2D / Audio / VR: ни одного RG_-символа.
+# Пакет обязан собираться и так — раньше выключенный модуль ронял всю сборку.
+for D in NONE UNITY_EDITOR; do
+  EX=""; case "$D" in *UNITY_EDITOR*) EX=editorstubs.cs;; esac
+  # Не %-40s: printf считает ширину в байтах, и кириллица съезжает.
+  printf "   %s" "$([ "$D" = NONE ] && echo "модули выключены, плеер                 " || echo "модули выключены, редактор              ")"
   OUT=$(csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW \
         -define:"$D" "${REFS[@]}" -out:"$B/rgchk.dll" stubs.cs $EX $SRC 2>&1) || true
   if [ -z "$OUT" ]; then echo "ok"; else echo "ОШИБКА"; echo "$OUT"; exit 1; fi
@@ -102,13 +118,13 @@ else echo "   ПРОСОЧИЛИСЬ ТИПЫ: $LEFT"; exit 1; fi
 
 echo "-- демо-пакет"
 OUT=$(csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW,CS0108 \
-      -define:UNITY_EDITOR "${REFS[@]}" -out:"$B/rgdemo.dll" stubs.cs editorstubs.cs $SRC $DEMO 2>&1 | grep -v warning) || true
+      -define:"$MOD;UNITY_EDITOR" "${REFS[@]}" -out:"$B/rgdemo.dll" stubs.cs editorstubs.cs $SRC $DEMO 2>&1 | grep -v warning) || true
 if [ -z "$OUT" ]; then echo "   компилируется: ok"; else echo "   ОШИБКА В ДЕМО"; echo "$OUT"; exit 1; fi
 
 echo "-- редакторная сборка"
 ED=$(find ../Packages/com.exerussus.runtimegizmos/Editor -name '*.cs')
 OUT=$(csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW,CS0108 \
-      -define:UNITY_EDITOR "${REFS[@]}" -out:"$B/rgeditor.dll" stubs.cs editorstubs.cs $SRC $ED 2>&1 | grep -v warning) || true
+      -define:"$MOD;UNITY_EDITOR" "${REFS[@]}" -out:"$B/rgeditor.dll" stubs.cs editorstubs.cs $SRC $ED 2>&1 | grep -v warning) || true
 if [ -z "$OUT" ]; then echo "   компилируется: ok"; else echo "   ОШИБКА В РЕДАКТОРНОЙ СБОРКЕ"; echo "$OUT"; exit 1; fi
 
 # Обещание GizmoLazy: в релизе исчезает вся цепочка — приёмник Track(...),
@@ -120,7 +136,7 @@ printf '%s' "$RUNCFG" > /tmp/rgbuild/il/ilcheck.runtimeconfig.json
 csc -nologo -target:exe -langversion:9.0 -nowarn:$NW "${REFS[@]}" -out:"$B/il/ilcheck.dll" ilcheck.cs
 IL=()
 for SYM in "" "UNITY_EDITOR"; do
-  csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW ${SYM:+-define:$SYM} \
+  csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW -define:"$MOD${SYM:+;$SYM}" \
     "${REFS[@]}" -out:"$B/il/rgcore.dll" stubs.cs editorstubs.cs $SRC 2>/dev/null
   csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW ${SYM:+-define:$SYM} \
     "${REFS[@]}" -r:"$B/il/rgcore.dll" -out:"$B/il/probe.dll" striptest.cs
@@ -137,7 +153,7 @@ DOCSKIPPED=""
 if [ -n "$PY" ]; then
   DOC=$($PY doccheck.py)
   OUT=$(csc -nologo -target:library -unsafe+ -langversion:9.0 -nowarn:$NW,CS0108,CS0168 \
-        -define:UNITY_EDITOR "${REFS[@]}" -out:"$B/rgdoc.dll" stubs.cs editorstubs.cs "$DOC" $SRC 2>&1 | grep -v warning) || true
+        -define:"$MOD;UNITY_EDITOR" "${REFS[@]}" -out:"$B/rgdoc.dll" stubs.cs editorstubs.cs "$DOC" $SRC 2>&1 | grep -v warning) || true
   if [ -z "$OUT" ]; then echo "   все компилируются: ok"; else echo "   ОШИБКА В ПРИМЕРАХ"; echo "$OUT"; exit 1; fi
 else
   # Единственный шаг, которому нужен Python: он вытаскивает примеры из README
@@ -154,13 +170,13 @@ fi
 # но отладочная проверка потока в Begin() в замер не попадает.
 echo "-- бенчмарк"
 csc -nologo -target:exe -unsafe+ -optimize+ -langversion:9.0 -nowarn:$NW \
-  -define:"RUNTIME_GIZMOS_ALWAYS" "${REFS[@]}" -out:"$B/rgbench.dll" stubs.cs bench.cs $SRC
+  -define:"$MOD;RUNTIME_GIZMOS_ALWAYS" "${REFS[@]}" -out:"$B/rgbench.dll" stubs.cs bench.cs $SRC
 printf '%s' "$RUNCFG" > /tmp/rgbuild/rgbench.runtimeconfig.json
 echo "   компилируется: ok"
 
 echo "-- прогон кейсов"
 csc -nologo -target:exe -unsafe+ -langversion:9.0 -nowarn:$NW \
-  -define:"UNITY_EDITOR" "${REFS[@]}" -out:"$B/rgtests.dll" stubs.cs editorstubs.cs rast.cs tests.cs $SRC
+  -define:"$MOD;UNITY_EDITOR" "${REFS[@]}" -out:"$B/rgtests.dll" stubs.cs editorstubs.cs rast.cs tests.cs $SRC
 printf '%s' "$RUNCFG" > /tmp/rgbuild/rgtests.runtimeconfig.json
 
 set +e

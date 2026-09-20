@@ -32,6 +32,12 @@ namespace RuntimeGizmos.Internal
         readonly Mesh[] _meshes = new Mesh[2];
         readonly int[] _meshVertCap = new int[2];
         readonly int[] _meshIdxCap = new int[2];
+
+        // Сколько заливок подряд буфер был вчетверо больше нужного. См. Upload.
+        readonly int[] _shrinkVotes = new int[2];
+        const int ShrinkAfter = 240;
+
+        const float BoundsLimit = 1e9f;
         int _cursor;
 
         bool _prepared;
@@ -222,14 +228,39 @@ namespace RuntimeGizmos.Internal
                 _meshes[_cursor] = m;
             }
 
-            // Ёмкость округляем вверх до степени двойки — реаллокация GPU-буферов происходит
-            // только при реальном росте, а не каждый кадр.
-            int cap = Mathf.Max(_primVerts, Mathf.NextPowerOfTwo(total));
-            if (_meshVertCap[_cursor] != cap)
+            // Ёмкость округляем вверх до степени двойки и меняем ТОЛЬКО при реальном росте.
+            //
+            // Раньше здесь стояло сравнение на неравенство, и буфер не только рос, но и
+            // сжимался: геометрия, число вершин которой гуляет вокруг степени двойки
+            // (1020 ↔ 1030 — обычное дело для путей, контактов, лучей), пересоздавала
+            // GPU-буфер и перезаливала индексы почти каждый кадр.
+            //
+            // Сжатие оставлено, но с гистерезисом: буфер должен оказаться вчетверо больше
+            // нужного ShrinkAfter заливок подряд. Разовый всплеск память отдаст, а колебание
+            // вокруг границы — нет.
+            int want = Mathf.Max(_primVerts, Mathf.NextPowerOfTwo(total));
+            int have = _meshVertCap[_cursor];
+            int cap = have;
+
+            if (want > have)
+            {
+                cap = want;
+            }
+            else if ((long)want * 4 <= have)
+            {
+                if (++_shrinkVotes[_cursor] >= ShrinkAfter) cap = want * 2;   // с запасом на рост
+            }
+            else
+            {
+                _shrinkVotes[_cursor] = 0;
+            }
+
+            if (cap != have)
             {
                 m.SetVertexBufferParams(cap, _layout);
                 _meshVertCap[_cursor] = cap;
                 _meshIdxCap[_cursor] = 0; // принудительно перезалить индексы
+                _shrinkVotes[_cursor] = 0;
             }
 
             if (_meshIdxCap[_cursor] < cap)
@@ -250,6 +281,14 @@ namespace RuntimeGizmos.Internal
             if (_retained.HasBounds) { mn = Vector3.Min(mn, _retained.Min); mx = Vector3.Max(mx, _retained.Max); }
             if (_front.HasBounds) { mn = Vector3.Min(mn, _front.Min); mx = Vector3.Max(mx, _front.Max); }
             if (mn.x > mx.x) { mn = Vector3.zero; mx = Vector3.zero; }
+
+            // Бесконечность в координатах (деление на ноль в пользовательском коде) дала бы
+            // «Invalid AABB» на каждом кадре. NaN сюда не доходит — его отсекают сравнения
+            // в Encapsulate, — а бесконечность проходит. Зажимаем: примитив с такой вершиной
+            // всё равно не нарисовать, зато остальной канал останется видимым.
+            var lim = new Vector3(BoundsLimit, BoundsLimit, BoundsLimit);
+            mn = Vector3.Min(Vector3.Max(mn, -lim), lim);
+            mx = Vector3.Min(Vector3.Max(mx, -lim), lim);
 
             var pad = new Vector3(_boundsPadding, _boundsPadding, _boundsPadding);
             var b = new Bounds();

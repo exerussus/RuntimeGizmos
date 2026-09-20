@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using RuntimeGizmos.Internal;
 using Cond = System.Diagnostics.ConditionalAttribute;
 
 namespace RuntimeGizmos.Extensions
@@ -145,8 +146,11 @@ namespace RuntimeGizmos.Extensions
             if (mesh == null || t == null) return;
             if (!mesh.isReadable)
             {
-                Debug.LogWarning($"[RuntimeGizmos] У меша '{mesh.name}' нет Read/Write Enabled — " +
-                                 "нормали прочитать нельзя.");
+                // Один раз на меш: вызов стоит в Update, и без этого предупреждение (вместе с
+                // интерполяцией строки) сыпалось в консоль каждый кадр.
+                if (GizmoRenderer.WarnedUnreadable.Add(GizmoObjectId.Of(mesh)))
+                    Debug.LogWarning($"[RuntimeGizmos] У меша '{mesh.name}' нет Read/Write Enabled — " +
+                                     "нормали прочитать нельзя.");
                 return;
             }
 
@@ -158,11 +162,26 @@ namespace RuntimeGizmos.Extensions
             int n = Mathf.Min(_verts.Count, _norms.Count);
             if (step < 1) step = 1;
 
+            // Нормаль преобразуется обратной транспонированной матрицей, а не как направление:
+            // TransformDirection учитывает только поворот, и при неравномерном масштабе
+            // нарисованные нормали переставали быть перпендикулярны поверхности, а при
+            // отрицательном — смотрели внутрь. worldToLocal и есть обратная; транспонирование
+            // — чтение её столбцов как строк.
+            var inv = t.worldToLocalMatrix;
+
             using (Gizmo.Scope(c))
                 for (int i = 0; i < n; i += step)
                 {
                     var p = t.TransformPoint(_verts[i]);
-                    Gizmo.DrawLine(p, p + t.TransformDirection(_norms[i]) * length);
+                    var ln = _norms[i];
+                    var wn = new Vector3(
+                        inv.m00 * ln.x + inv.m10 * ln.y + inv.m20 * ln.z,
+                        inv.m01 * ln.x + inv.m11 * ln.y + inv.m21 * ln.z,
+                        inv.m02 * ln.x + inv.m12 * ln.y + inv.m22 * ln.z);
+
+                    float m = wn.magnitude;
+                    if (m < 1e-12f) continue;       // вырожденный масштаб: направления нет
+                    Gizmo.DrawLine(p, p + wn * (length / m));
                 }
 
             _verts.Clear();

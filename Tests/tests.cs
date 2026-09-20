@@ -140,7 +140,9 @@ public static class Tests
                     if (g.x == g.z && g.y == g.w) zero++;
                 }
             }
-            Check("B1 сегментов разобрано", total == 824, "total=" + total);
+            // 823, а не 824: у «%» был продублирован отрезок 4342 (и вместо верхней грани
+            // колечка стояла диагональ) — дубль убран вместе с исправлением глифа.
+            Check("B1 сегментов разобрано", total == 823, "total=" + total);
             Check("B2 нет вырожденных отрезков", zero == 0, "zero=" + zero);
             Check("B3 индексы не вылезают за буфер", worst <= GizmoFont.Segments.Length,
                   "worst=" + worst + " len=" + GizmoFont.Segments.Length);
@@ -2212,6 +2214,273 @@ public static class Tests
             thin[0].Clear();
             Gizmo.DrawLine(Vector3.zero, new Vector3(5f, 0f, 0f));
             Check("AB8 и рисует сплошным", MaxDash(thin[0]) < 0f, "" + MaxDash(thin[0]));
+        }
+
+        // ==================================================== AC. находки аудита 1.5.2
+        Group("AC. Исправления по аудиту");
+        {
+            var cam = new Camera { cameraType = CameraType.Game }; cam.transform = new Transform();
+
+            // --- HUD как единственный продюсер
+            Boot();                                     // рендерер снесён, как на свежем старте
+            for (int f = 0; f < 3; f++) { Gizmo.DrawScreenText("fps 60", GizmoCorner.TopLeft); Tick(f * 0.016f); }
+            Check("AC1 один только HUD поднимает рендерер", GizmoRenderer.Ready);
+            var txt = Priv<GizmoChannel<GizmoTextVertex>[]>(typeof(GizmoRenderer), "_text");
+            Check("AC2 и его текст доходит до меша", txt != null && txt[0].Prepare(out _, out _));
+
+            Boot();
+            for (int f = 0; f < 3; f++) { var tb = Gizmo.Table(GizmoAnchor.TopRight); tb.Row("hp", 100); Tick(f * 0.016f); }
+            Check("AC3 то же для Gizmo.Table", GizmoRenderer.Ready);
+
+            Boot(); GizmoRenderer.Ensure();
+            Gizmo.enabled = false;
+            var off = Gizmo.Table(GizmoAnchor.TopLeft);
+            Check("AC4 enabled=false: таблица не создаётся", !off.IsValid);
+            Gizmo.enabled = true;
+
+            Throws("AC5 якорь вне диапазона не бросает", () =>
+            {
+                var bad = Gizmo.Table((GizmoAnchor)9);
+                bad.Row("x", 1);
+                Gizmo.DrawScreenText("x", (GizmoAnchor)42);
+                Tick(1f);
+            }, false);
+            Check("AC6 и даёт пустой хендл", !Gizmo.Table((GizmoAnchor)9).IsValid);
+            Check("AC7 NaN-кегль даёт пустой хендл", !Gizmo.Table(GizmoAnchor.TopLeft, float.NaN).IsValid);
+            Tick(1.1f);
+
+            // --- ёмкость GPU-буфера
+            Boot(); GizmoRenderer.Ensure();
+            Gizmo.lineWidth = 1f;
+            Graphics.Record = false;
+            Mesh.ResetCounters();
+            for (int f = 0; f < 200; f++)
+            {
+                int lines = (f % 3 == 0) ? 515 : 510;               // 1030 / 1020 вершин вокруг 1024
+                for (int i = 0; i < lines; i++) Gizmo.DrawLine(Vector3.zero, new Vector3(i, 1, 0));
+                Tick(2f + f * 0.016f);
+                GizmoRenderer.Submit(cam);
+            }
+            // Потолок 4: два меша кольца, у каждого первая аллокация и один рост 1024 → 2048.
+            // До исправления здесь было больше сотни.
+            Check("AC8 колебание вокруг степени двойки не пересоздаёт буфер", Mesh.ParamCalls <= 4,
+                  "SetVertexBufferParams: " + Mesh.ParamCalls);
+
+            var thinAc = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            for (int i = 0; i < 20000; i++) Gizmo.DrawLine(Vector3.zero, Vector3.one);   // всплеск
+            Tick(10f); GizmoRenderer.Submit(cam);
+            thinAc[0].Prepare(out var spikeMesh, out _);
+            int spikeCap = spikeMesh.VBCap;
+            int lastCap = spikeCap;
+            for (int f = 0; f < 1200; f++)
+            {
+                for (int i = 0; i < 100; i++) Gizmo.DrawLine(Vector3.zero, Vector3.one);
+                Tick(11f + f * 0.016f); GizmoRenderer.Submit(cam);
+                thinAc[0].Prepare(out var mm, out _);
+                lastCap = mm.VBCap;
+            }
+            Check("AC9 после всплеска буфер со временем сжимается", spikeCap >= 40000 && lastCap <= 1024,
+                  spikeCap + " → " + lastCap);
+            Graphics.Record = true;
+
+            // --- GizmoLazy: реентерабельность и состояние
+            Boot(); GizmoRenderer.Ensure();
+            var goA = new GameObject();
+            GizmoLazy.Track(goA.transform).Volume();
+            GizmoLazy.Track(goA.transform).Axes();
+            GizmoLazy.Track(goA.transform).Draw(() => GizmoLazy.Untrack(goA.transform));
+            Throws("AC10 Untrack из своего же колбэка не бросает", () => Registry.Tick(), false);
+            Check("AC11 и снимает все записи цели", Registry.Count == 0, "" + Registry.Count);
+
+            var goB = new GameObject();
+            GizmoLazy.Track(goB.transform).Volume();
+            GizmoLazy.Track(goB.transform).Draw(() => GizmoLazy.Clear());
+            Throws("AC12 Clear из колбэка не бросает", () => Registry.Tick(), false);
+            Check("AC13 и реестр пуст", Registry.Count == 0, "" + Registry.Count);
+
+            GizmoLazy.Track(goB.transform).Draw(() =>
+            {
+                GizmoLazy.Untrack(goB.transform);
+                GizmoLazy.Track(goB.transform).Key("again").Axes();
+            });
+            Registry.Tick();
+            Check("AC14 регистрация из колбэка после Untrack выживает", Registry.Count == 1, "" + Registry.Count);
+            GizmoLazy.Clear();
+
+            GizmoLazy.Track(goB.transform).Volume(Color.red);
+            Gizmo.color = Color.green; Gizmo.lineWidth = 3f; Gizmo.depthTest = false; Gizmo.duration = 2f;
+            Registry.Tick();
+            Check("AC15 Tick возвращает пользовательское состояние рисования",
+                  Gizmo.color == Color.green && Gizmo.lineWidth == 3f && !Gizmo.depthTest && Gizmo.duration == 2f,
+                  Gizmo.color + " w=" + Gizmo.lineWidth + " depth=" + Gizmo.depthTest + " d=" + Gizmo.duration);
+            Gizmo.Reset(); GizmoLazy.Clear();
+
+            var linkTo = new GameObject();
+            GizmoLazy.Track(goB.transform).LinkTo(linkTo.transform);
+            Registry.Tick();
+            int withLink = Registry.Count;
+            UnityEngine.Object.DestroyImmediate(linkTo.transform);
+            Registry.Tick();
+            Check("AC16 связь с уничтоженной второй целью снимается", withLink == 1 && Registry.Count == 0,
+                  withLink + " → " + Registry.Count);
+
+            var doomedAc = new GameObject();
+            GizmoLazy.Track(doomedAc.transform).Volume();
+            GizmoLazy.Enabled = false;
+            UnityEngine.Object.DestroyImmediate(doomedAc.transform);
+            Registry.Tick();
+            Check("AC17 выключенный слой всё равно чистит мёртвые записи", Registry.Count == 0, "" + Registry.Count);
+            GizmoLazy.Enabled = true;
+
+            // --- толщина, выставленная до первого Draw*
+            Boot();
+            Gizmo.lineWidth = 3f;
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);                  // первый вызов поднимает рендерер
+            var wideAc = Priv<GizmoChannel<GizmoWideVertex>[]>(typeof(GizmoRenderer), "_wide");
+            Check("AC18 Ensure не затирает lineWidth пользователя",
+                  Gizmo.lineWidth == 3f && wideAc[0].Target(false).Count == 6,
+                  "w=" + Gizmo.lineWidth + " wide=" + wideAc[0].Target(false).Count);
+
+            // --- иконки и depthTest
+            Boot(); GizmoRenderer.Ensure();
+            var icoDepth = Priv<Dictionary<GizmoObjectId, GizmoTexturedBatch>>(typeof(GizmoRenderer), "_icons");
+            var icoTop = Priv<Dictionary<GizmoObjectId, GizmoTexturedBatch>>(typeof(GizmoRenderer), "_iconsTop");
+            var icoTex = new Texture2D { name = "ico" };
+            Gizmo.depthTest = false;
+            Gizmo.DrawIcon(Vector3.zero, icoTex);
+            Check("AC19 depthTest=false: иконка уходит в батч «поверх всего»",
+                  icoTop.Count == 1 && icoDepth.Count == 0, icoDepth.Count + "/" + icoTop.Count);
+            Gizmo.depthTest = true;
+            Gizmo.DrawIcon(Vector3.zero, icoTex);
+            Check("AC20 depthTest=true: в обычный", icoTop.Count == 1 && icoDepth.Count == 1,
+                  icoDepth.Count + "/" + icoTop.Count);
+            Throws("AC21 оба батча отправляются без ошибок", () => { Tick(1f); GizmoRenderer.Submit(cam); }, false);
+            UnityEngine.Object.DestroyImmediate(icoTex);
+            Tick(1.1f);
+            Check("AC22 мёртвая текстура вычищается из обоих", icoTop.Count == 0 && icoDepth.Count == 0,
+                  icoDepth.Count + "/" + icoTop.Count);
+
+            // --- отказ шейдеров не выключает систему навсегда
+            Boot();
+            Shader.Available = false;
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            bool offAfterFail = !GizmoRenderer.Enabled;
+            Shader.Available = true;
+            GizmoRenderer.Dispose();                                    // граница сессии
+            Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Check("AC23 после починки шейдеров следующая сессия рисует",
+                  offAfterFail && GizmoRenderer.Enabled && GizmoRenderer.Ready,
+                  offAfterFail + "/" + GizmoRenderer.Enabled + "/" + GizmoRenderer.Ready);
+
+            Boot();
+            Gizmo.enabled = false;
+            GizmoRenderer.Dispose();
+            Check("AC24 а выключенное пользователем Dispose не включает", !GizmoRenderer.Enabled);
+            Gizmo.enabled = true;
+
+            // --- шрифт
+            Check("AC25 неразрывный пробел поддержан", Gizmo.IsRenderable(' ') && Gizmo.IsRenderable(' '));
+            Boot(); GizmoRenderer.Ensure();
+            txt = Priv<GizmoChannel<GizmoTextVertex>[]>(typeof(GizmoRenderer), "_text");
+            Gizmo.DrawText("1 000", Vector3.zero);
+            int nbsp = txt[0].Target(false).Count;
+            txt[0].Clear();
+            Gizmo.DrawText("1 000", Vector3.zero);
+            Check("AC26 и рисуется как пробел, а не заглушкой", nbsp == txt[0].Target(false).Count && nbsp > 0,
+                  nbsp + " против " + txt[0].Target(false).Count);
+
+            // --- подписи-числа
+            txt[0].Clear();
+            Gizmo.DrawVector(Vector3.zero, new Vector3(1.5f, 0f, 0f), 1f, "");
+            int numVerts = txt[0].Target(false).Count;
+            float numMin = MinOffsetX(txt[0]);
+            txt[0].Clear();
+            Gizmo.DrawText("1.5", new Vector3(1.5f, 0f, 0f), 12f, new Vector2(0f, 14f));
+            Check("AC27 подпись длиной совпадает с DrawText(\"1.5\")",
+                  numVerts == txt[0].Target(false).Count && numVerts > 0 && numMin == MinOffsetX(txt[0]),
+                  numVerts + " против " + txt[0].Target(false).Count);
+
+            // --- паттерны и расширения
+            Boot(); GizmoRenderer.Ensure(); Gizmo.lineWidth = 1f;
+            thinAc = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            Gizmo.DrawTrajectoryGravity(Vector3.zero, Vector3.up * 5f, Vector3.zero, 2f, 10);
+            float lastY; unsafe { var tb = thinAc[0].Target(false); lastY = tb.Ptr[tb.Count - 1].Position.y; }
+            Check("AC28 нулевая гравитация — прямая, а не парабола", Math.Abs(lastY - 10f) < 1e-4f, "y=" + lastY);
+            thinAc[0].Clear();
+            Gizmo.DrawTrajectory(Vector3.zero, Vector3.up * 5f, 2f, 10);
+            unsafe { var tb = thinAc[0].Target(false); lastY = tb.Ptr[tb.Count - 1].Position.y; }
+            Check("AC29 без параметра — земная", Math.Abs(lastY - (10f - 0.5f * 9.81f * 4f)) < 1e-3f, "y=" + lastY);
+            thinAc[0].Clear();
+            Gizmo.DrawTrajectory(Vector3.zero, Vector3.up * 5f, 2f, 10, Vector3.zero);
+            unsafe { var tb = thinAc[0].Target(false); lastY = tb.Ptr[tb.Count - 1].Position.y; }
+            Check("AC29b старая перегрузка ведёт себя как раньше", Math.Abs(lastY - (10f - 0.5f * 9.81f * 4f)) < 1e-3f, "y=" + lastY);
+
+            thinAc[0].Clear();
+            new Ray(Vector3.zero, Vector3.forward).DrawTo(default(RaycastHit), 10f, Color.red);
+            Check("AC30 промах рейкаста — один приглушённый луч", thinAc[0].Target(false).Count == 2,
+                  "" + thinAc[0].Target(false).Count);
+            thinAc[0].Clear();
+            default(RaycastHit).Draw(Color.red);
+            Check("AC31 пустой RaycastHit не рисуется", thinAc[0].Target(false).Count == 0);
+
+            thinAc[0].Clear();
+            var volT = new GameObject().transform; volT.position = new Vector3(5f, 0f, 0f);
+            Gizmo.DrawVolume(volT);
+            float plainMaxX; unsafe { plainMaxX = thinAc[0].Target(false).Max.x; }
+            thinAc[0].Clear();
+            Gizmo.matrix = Matrix4x4.TRS(new Vector3(100f, 0f, 0f), Quaternion.identity, Vector3.one);
+            Gizmo.DrawVolume(volT);
+            float withMatrixMaxX; unsafe { withMatrixMaxX = thinAc[0].Target(false).Max.x; }
+            Check("AC32 DrawVolume(Transform) не применяет Gizmo.matrix к мировым габаритам",
+                  Math.Abs(plainMaxX - withMatrixMaxX) < 1e-4f, plainMaxX + " против " + withMatrixMaxX);
+            Check("AC33 и возвращает матрицу", Gizmo.matrix.m03 == 100f);
+            Gizmo.Reset();
+
+            // --- снимок состояния, сделанный до подъёма рендерера
+            // Эдит-мод после перезагрузки домена: ResetState никто не звал, в Width лежит 0,
+            // а первым рендерер поднимает обход GizmoLazy. Его Scope не должен вернуть этот 0.
+            Boot();
+            GizmoSettings.PlatformOverride = GizmoPlatform.Mobile;       // дефолт толщины 2
+            GizmoRenderer.Dispose();
+            GizmoRenderer.Width = 0f; GizmoRenderer.WidthIsDefault = true;
+            var lazyFirst = new GameObject();
+            GizmoLazy.Track(lazyFirst.transform).Axes();
+            Registry.Tick();
+            Check("AC35 Scope, снятый до Ensure, возвращает дефолт, а не ноль",
+                  GizmoRenderer.Ready && Gizmo.lineWidth == GizmoSettings.DefaultLineWidth && Gizmo.lineWidth == 2f,
+                  "w=" + Gizmo.lineWidth + " default=" + GizmoSettings.DefaultLineWidth);
+            GizmoLazy.Clear();
+            GizmoSettings.PlatformOverride = null;
+
+            // --- связь плоских габаритов
+            Boot(); GizmoRenderer.Ensure(); Gizmo.lineWidth = 1f;
+            thinAc = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            var flatA = new Bounds(Vector3.zero, new Vector3(2f, 0f, 2f));
+            var flatB = new Bounds(new Vector3(10f, 3f, 0f), new Vector3(2f, 0f, 2f));
+            Gizmo.DrawLink(flatA, flatB, Color.white, 1f);
+            bool fromCenter = false;
+            unsafe
+            {
+                var tb = thinAc[0].Target(false);
+                for (int i = 0; i < tb.Count; i++)
+                    if (tb.Ptr[i].Position == Vector3.zero) fromCenter = true;
+            }
+            Check("AC36 линия связи не выходит из центра плоского габарита", !fromCenter);
+
+            // --- кэш ассета настроек
+            GizmoSettings.ReloadAsset();
+            int loads0 = Resources.LoadCalls;
+            for (int i = 0; i < 5; i++) { GizmoSettings.Invalidate(); var _ = GizmoSettings.DefaultLineWidth; }
+            Check("AC37 отсутствие ассета кэшируется: Resources.Load не зовётся на каждый Resolve",
+                  Resources.LoadCalls - loads0 <= 1, "вызовов: " + (Resources.LoadCalls - loads0));
+
+            // --- бесконечность в координатах
+            thinAc[0].Clear();
+            Gizmo.DrawLine(Vector3.zero, new Vector3(float.PositiveInfinity, 0f, 0f));
+            Tick(3f);
+            thinAc[0].Prepare(out _, out var infBounds);
+            Check("AC34 бесконечная вершина не даёт бесконечных bounds",
+                  !float.IsInfinity(infBounds.size.x) && !float.IsNaN(infBounds.size.x), "" + infBounds.size.x);
         }
 
         Console.WriteLine("\n═══════════════════════════════════");

@@ -7,6 +7,21 @@ using RuntimeGizmos.Internal;
 namespace RuntimeGizmos.EditorTools
 {
     /// <summary>
+    /// Сбрасывает кэш ассета настроек, когда в проекте что-то создали, удалили или
+    /// переместили. Рантайм кэширует и «ассета нет» — иначе платил бы Resources.Load
+    /// на каждом пересборе настроек, — а узнать о появлении ассета может только редактор.
+    /// </summary>
+    static class GizmoSettingsAssetWatcher
+    {
+        [InitializeOnLoadMethod]
+        static void Init()
+        {
+            EditorApplication.projectChanged -= GizmoSettings.ReloadAsset;
+            EditorApplication.projectChanged += GizmoSettings.ReloadAsset;
+        }
+    }
+
+    /// <summary>
     /// Project Settings → RuntimeGizmos.
     ///
     /// Страница правит тот же GizmoSettingsAsset, который пакет ищет в Resources.

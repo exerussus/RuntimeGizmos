@@ -26,7 +26,10 @@ namespace RuntimeGizmos
         internal static GizmoPlatform Detect()
         {
             // Первым: Quest — это Android, но профиль ему нужен свой.
-#if ENABLE_VR
+            // ENABLE_VR — признак платформы, а не модуля: он определён и тогда, когда
+            // com.unity.modules.vr в проекте выключен, и XRSettings просто не существует.
+            // RG_VR / RG_XR выставляет versionDefines в asmdef по факту наличия модулей.
+#if ENABLE_VR && RG_VR && RG_XR
             if (UnityEngine.XR.XRSettings.enabled && UnityEngine.XR.XRSettings.isDeviceActive)
                 return GizmoPlatform.XR;
 #endif

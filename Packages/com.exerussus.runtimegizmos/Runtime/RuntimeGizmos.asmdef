@@ -9,6 +9,32 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.modules.physics",
+            "expression": "1.0.0",
+            "define": "RG_PHYSICS"
+        },
+        {
+            "name": "com.unity.modules.physics2d",
+            "expression": "1.0.0",
+            "define": "RG_PHYSICS2D"
+        },
+        {
+            "name": "com.unity.modules.audio",
+            "expression": "1.0.0",
+            "define": "RG_AUDIO"
+        },
+        {
+            "name": "com.unity.modules.vr",
+            "expression": "1.0.0",
+            "define": "RG_VR"
+        },
+        {
+            "name": "com.unity.modules.xr",
+            "expression": "1.0.0",
+            "define": "RG_XR"
+        }
+    ],
     "noEngineReferences": false
 }

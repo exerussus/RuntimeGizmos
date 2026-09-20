@@ -1,7 +1,9 @@
-// Команды GizmoLazy, зависящие от модулей физики. Файл отдельный по той же причине,
-// что и GizmoExtensions.Physics.cs: если модуль в проекте выключен, удаляется он один.
-// Вместе с ним исчезают и сами команды, и их ветка в диспетчере — частичный метод
-// без реализации компилятор выбрасывает вместе с вызовом.
+// Команды GizmoLazy, зависящие от модулей физики. Компилируются, если включён хотя бы
+// один из них (символы RG_PHYSICS / RG_PHYSICS2D выставляет versionDefines в asmdef);
+// ветки 3D и 2D в диспетчере закрыты каждая своим символом. Без обоих модулей исчезают
+// и сами команды, и их ветка в диспетчере — частичный метод без реализации компилятор
+// выбрасывает вместе с вызовом.
+#if RG_PHYSICS || RG_PHYSICS2D
 using System.Runtime.CompilerServices;
 using UnityEngine;
 using RuntimeGizmos.Extensions;
@@ -39,15 +41,25 @@ namespace RuntimeGizmos
             switch (e.Kind)
             {
                 case GizmoLazyKind.Shape:
-                    if (e.Target is Collider c3) c3.DrawShape(e.Color);
-                    else if (e.Target is Collider2D c2) c2.DrawShape(e.Color);
+#if RG_PHYSICS
+                    if (e.Target is Collider c3) { c3.DrawShape(e.Color); return; }
+#endif
+#if RG_PHYSICS2D
+                    if (e.Target is Collider2D c2) { c2.DrawShape(e.Color); return; }
+#endif
                     return;
 
                 case GizmoLazyKind.Velocity:
-                    if (e.Target is Rigidbody rb) rb.DrawVelocity(e.Color, e.A);
-                    else if (e.Target is Rigidbody2D rb2) rb2.DrawVelocity(e.Color, e.A);
+#if RG_PHYSICS
+                    if (e.Target is Rigidbody rb) { rb.DrawVelocity(e.Color, e.A); return; }
+#endif
+#if RG_PHYSICS2D
+                    if (e.Target is Rigidbody2D rb2) { rb2.DrawVelocity(e.Color, e.A); return; }
+#endif
                     return;
             }
         }
     }
 }
+
+#endif // RG_PHYSICS || RG_PHYSICS2D

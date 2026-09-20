@@ -63,6 +63,22 @@ namespace RuntimeGizmos
             }
         }
 
+        /// <summary>
+        /// Перепроверить автоопределённую платформу. Зовётся при подъёме рендерера: к этому
+        /// моменту XR-устройство уже активно, а в момент первого обращения к настройкам
+        /// (SubsystemRegistration) — ещё нет. Явный PlatformOverride не трогается.
+        /// </summary>
+        internal static void RedetectPlatform()
+        {
+            if (_platformOverride.HasValue || !_platformValid) return;
+
+            var p = GizmoPlatformUtil.Detect();
+            if (p == _platform) return;
+
+            _platform = p;
+            Invalidate();
+        }
+
         /// <summary>Посмотреть чужой профиль, не собирая билд. null — автоопределение.</summary>
         public static GizmoPlatform? PlatformOverride
         {
@@ -88,7 +104,19 @@ namespace RuntimeGizmos
         {
             get
             {
-                if (_assetLoaded) return _asset;
+                // Кэшируется и промах тоже: Resolve зовётся после каждого Invalidate, а тот может
+                // приходить хоть каждый кадр (анимация оверрайда). В редакторе ассет создают и
+                // удаляют на ходу — там кэш сбрасывает GizmoSettingsAssetWatcher по
+                // EditorApplication.projectChanged. Раньше сбрасывать было некому: созданный через
+                // Create-меню ассет не применялся до перезагрузки домена, страница настроек писала
+                // «ассета нет», а её кнопка создавала ВТОРОЙ — после чего Resources.Load выбирал
+                // один из двух произвольно, в том числе в билде.
+                if (_assetLoaded)
+                {
+                    // Уничтоженный (fake-null) ассет — не «ассета нет», а повод перечитать.
+                    if (ReferenceEquals(_asset, null) || _asset != null) return _asset;
+                }
+
                 _asset = Resources.Load<GizmoSettingsAsset>(AssetResourceName);
                 _assetLoaded = true;
                 return _asset;

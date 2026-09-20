@@ -43,7 +43,7 @@ namespace RuntimeGizmos
         public static bool enabled
         {
             get => GizmoRenderer.Enabled;
-            set => GizmoRenderer.Enabled = value;
+            set => GizmoRenderer.SetEnabledByUser(value);
         }
 
         public static Color color
@@ -73,7 +73,7 @@ namespace RuntimeGizmos
         public static float lineWidth
         {
             get => GizmoRenderer.Width;
-            set => GizmoRenderer.Width = value;
+            set { GizmoRenderer.Width = value; GizmoRenderer.WidthIsDefault = false; }
         }
 
         /// <summary>false — рисовать поверх всей геометрии (ZTest Always).</summary>
@@ -129,7 +129,8 @@ namespace RuntimeGizmos
         {
             color = Color.white;
             matrix = Matrix4x4.identity;
-            lineWidth = GizmoSettings.DefaultLineWidth;
+            GizmoRenderer.Width = GizmoSettings.DefaultLineWidth;
+            GizmoRenderer.WidthIsDefault = true;
             depthTest = true;
             duration = 0f;
             GizmoRenderer.Dash = 0f;
@@ -154,6 +155,7 @@ namespace RuntimeGizmos
             readonly Color _c;
             readonly Matrix4x4 _m;
             readonly float _w;
+            readonly bool _wDefault;
             readonly int _z;
             readonly float _d;
             readonly float _dash;
@@ -164,6 +166,7 @@ namespace RuntimeGizmos
                 this._c = s_Color;
                 this._m = s_Matrix;
                 this._w = GizmoRenderer.Width;
+                this._wDefault = GizmoRenderer.WidthIsDefault;
                 this._z = GizmoRenderer.Z;
                 this._d = GizmoRenderer.Duration;
                 this._dash = GizmoRenderer.Dash;
@@ -174,7 +177,13 @@ namespace RuntimeGizmos
             {
                 color = _c;
                 matrix = _m;
-                GizmoRenderer.Width = _w;
+                // «Толщину никто не трогал» возвращаем не числом, а заново прочитанным дефолтом.
+                // Снимок мог быть сделан ДО подъёма рендерера (в эдит-моде после перезагрузки
+                // домена там ещё 0) или до уточнения платформы — и возврат числа затёр бы
+                // дефолт, который Ensure только что выставил внутри scope. Побочно: оверрайд
+                // DefaultLineWidth, изменённый на ходу, подхватывается на закрытии ближайшего scope.
+                GizmoRenderer.Width = _wDefault ? GizmoSettings.DefaultLineWidth : _w;
+                GizmoRenderer.WidthIsDefault = _wDefault;
                 GizmoRenderer.Z = _z;
                 GizmoRenderer.Duration = _d;
 
@@ -290,6 +299,39 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawScreenText(string text, GizmoCorner corner, float sizePixels = 14f)
             => GizmoRenderer.CornerText(text, corner, sizePixels);
+
+        /// <summary>
+        /// Подпись-число: «префикс + значение + суффикс» без единой managed-аллокации.
+        ///
+        /// Паттерны и расширения подписывают длину, скорость, дистанцию КАЖДЫЙ КАДР, и делали
+        /// это через value.ToString(fmt) + конкатенацию — две-три строки мусора на вызов, причём
+        /// на путях по умолчанию (label = ""), о которых пользователь и не догадывается.
+        /// Здесь число форматируется прямо в стековый буфер и уходит в Text как span.
+        ///
+        /// Культура — инвариантная, как у экранных таблиц: раньше в ru-RU мировые подписи
+        /// выходили «1,5», а HUD рядом писал «1.5».
+        /// </summary>
+        internal static void DrawNumber(ReadOnlySpan<char> prefix, float value, ReadOnlySpan<char> format,
+                                        ReadOnlySpan<char> suffix, Vector3 position, float sizePixels,
+                                        Vector2 pixelOffset)
+        {
+            Span<char> buf = stackalloc char[64];
+            if (prefix.Length > 16 || suffix.Length > 16) return;
+
+            prefix.CopyTo(buf);
+            int n = prefix.Length;
+
+            // Под число остаётся не меньше 32 символов. Не влезло (значение порядка 1e32 и выше) —
+            // подпись молча пропускается, как любая некорректная.
+            if (!value.TryFormat(buf.Slice(n, buf.Length - n - suffix.Length), out int written, format,
+                                 System.Globalization.CultureInfo.InvariantCulture)) return;
+            n += written;
+
+            suffix.CopyTo(buf.Slice(n));
+            n += suffix.Length;
+
+            GizmoRenderer.Text(buf.Slice(0, n), Xf(position), sizePixels, pixelOffset, 0.5f);
+        }
 
         static float AlignFactor(GizmoTextAlign a) =>
             a == GizmoTextAlign.Left ? 0f : a == GizmoTextAlign.Right ? 1f : 0.5f;

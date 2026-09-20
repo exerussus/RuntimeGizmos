@@ -126,6 +126,7 @@ namespace RuntimeGizmos.Internal
         {
             _ready = false;
             _warned = false;
+            _warnedTables = false;
             _chars = null;
             _cellOffset = null; _cellLength = null; _cellColor = null;
             _rowFirstCell = null; _rowCells = null; _rowKind = null; _rowColor = null; _rowNext = null;
@@ -155,13 +156,37 @@ namespace RuntimeGizmos.Internal
                              "или выводите меньше строк за кадр.");
         }
 
+        static bool _warnedTables;
+
+        // Отдельное сообщение: общий Overflow советует поднять HudMaxCells/HudMaxChars,
+        // а здесь упёрлись в константу, и этот совет отправлял бы искать не там.
+        static void TableOverflow()
+        {
+            if (_warnedTables) return;
+            _warnedTables = true;
+            Debug.LogWarning("[RuntimeGizmos] Больше " + MaxTables + " экранных блоков за кадр, лишние не нарисованы. " +
+                             "Блок открывает каждый Gizmo.Table и каждая смена кегля между DrawScreenText " +
+                             "на одном якоре — объедините вывод в меньшее число таблиц.");
+        }
+
         // ================================================================== набор данных
 
         internal static GizmoTable NewTable(GizmoAnchor anchor, float sizePixels, bool implicitBlock)
         {
+            // Тот же вход, что у Draw*: выключатель, проверка потока, подъём рендерера и
+            // отметка «в кадре были данные». Без него HUD-only проект не рисовал ничего:
+            // Ensure вызывался только из Draw*, а BeginFrame без рендерера лишь сбрасывал блоки.
+            //
+            // Аргументы проверяются ДО входа: отвергнутый вызов не должен считаться данными кадра.
+            // Якорь вне диапазона индексировал бы _implicitAt уже ПОСЛЕ _tblCount++ и оставлял
+            // занятый слот. NaN проходит любое сравнение «<= 0» и отравляет раскладку всей
+            // стопки якоря — отсекаем обратным условием.
+            if ((uint)anchor >= (uint)Anchors || !(sizePixels > 0f)) return default;
+            if (!GizmoRenderer.Begin()) return default;
+
             Ensure();
 
-            if (_tblCount == MaxTables) { Overflow(); return default; }
+            if (_tblCount == MaxTables) { TableOverflow(); return default; }
 
             int t = _tblCount++;
             _tblAnchor[t] = (byte)anchor;
@@ -186,7 +211,9 @@ namespace RuntimeGizmos.Internal
         /// <summary>Одна якорная надпись: дописывается в открытый неявный блок или открывает новый.</summary>
         internal static void AnchoredLine(ReadOnlySpan<char> text, GizmoAnchor anchor, float sizePixels)
         {
-            if (text.IsEmpty || sizePixels <= 0f) return;
+            if (text.IsEmpty || !(sizePixels > 0f)) return;
+            if ((uint)anchor >= (uint)Anchors) return;
+            if (!GizmoRenderer.Begin()) return;
 
             Ensure();
 
@@ -440,8 +467,9 @@ namespace RuntimeGizmos.Internal
                     }
                     else
                     {
-                        int c = i < cols ? i : cols - 1;
-                        if (w > _colWidth[c]) _colWidth[c] = w;
+                        // Ячейки сверх числа колонок Emit не рисует — значит и ширину они
+                        // занимать не должны. Раньше они раздували последнюю колонку.
+                        if (i < cols && w > _colWidth[i]) _colWidth[i] = w;
                     }
                 }
 

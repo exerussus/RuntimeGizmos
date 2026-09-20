@@ -110,6 +110,14 @@ namespace RuntimeGizmos
             return sb.ToString();
         }
 
+        // Идёт обход в Tick. Пользовательский колбэк (GizmoLazy…Draw(() => …)) вправе позвать
+        // Untrack или Clear прямо изнутри — например, «дорисовал и снялся». Список при этом
+        // сжимать нельзя: обход идёт по индексам, и следующая же итерация (или RemoveAt в catch)
+        // вылетала за границу. Исключение уходило из узла PlayerLoop, и граница кадра в этом
+        // кадре не проводилась вовсе. Поэтому во время обхода записи только помечаются
+        // (Expiry = -∞ — «уже истекла»), а физически убираются одним проходом после него.
+        static bool _ticking;
+
         public static void Remove(Object target, string key)
         {
             if (target == null) return;
@@ -119,43 +127,102 @@ namespace RuntimeGizmos
             {
                 if (_entries[i].TargetId != id) continue;
                 if (key != null && _entries[i].Key != key) continue;
-                _entries.RemoveAt(i);
+
+                if (_ticking) Kill(i);
+                else _entries.RemoveAt(i);
             }
         }
 
         public static void Clear()
         {
-            _entries.Clear();
             _overflowWarned = false;
+
+            if (_ticking)
+            {
+                for (int i = 0; i < _entries.Count; i++) Kill(i);
+                return;
+            }
+
+            _entries.Clear();
         }
+
+        // Есть что убирать. Без флага Sweep каждый кадр перепроверял бы Unity-null у каждой
+        // записи второй раз подряд — обход только что сделал ровно то же самое.
+        static bool _needSweep;
+
+        static void Kill(int i)
+        {
+            _needSweep = true;
+            var e = _entries[i];
+            e.Expiry = float.NegativeInfinity;
+            e.Custom = null;                    // не держим замыкание до конца обхода
+            _entries[i] = e;
+        }
+
+        static bool Dead(in Entry e, float now) =>
+            e.Target == null || now >= e.Expiry ||
+            // Связь с уничтоженной второй целью ничего не рисует и сама не снимется никогда.
+            (e.Kind == GizmoLazyKind.Link && e.Ref == null);
 
         /// <summary>На границе кадра, до обмена буферов — иначе опоздает на кадр.</summary>
         public static void Tick()
         {
             if (_entries.Count == 0) return;
-            if (!GizmoLazy.Enabled || !Internal.GizmoRenderer.Enabled) return;
 
             float now = Time.realtimeSinceStartup;
 
-            for (int i = _entries.Count - 1; i >= 0; i--)
+            // Выключенный слой не рисует, но чистить обязан: иначе истёкшие записи и записи
+            // уничтоженных объектов держат свои замыкания и занимают места до MaxTracked
+            // всё время, пока слой выключен.
+            if (!GizmoLazy.Enabled || !Internal.GizmoRenderer.Enabled)
             {
-                var e = _entries[i];
+                Sweep(now);
+                return;
+            }
 
-                if (e.Target == null || now >= e.Expiry) { _entries.RemoveAt(i); continue; }
+            // Состояние рисования глобальное, а записи рисуются с чистого листа (ResetState
+            // ниже). Без снимка пользовательские Gizmo.lineWidth / depthTest / color, выставленные
+            // один раз в Start, молча сбрасывались в дефолт на первой же границе кадра, как
+            // только в реестре появлялась хоть одна запись.
+            var saved = Gizmo.Scope();
+            _ticking = true;
 
-                // Чистое состояние на запись: иначе порядок регистраций стал бы значимым.
-                Gizmo.ResetState();
-
-                try
+            try
+            {
+                // Записи, добавленные из колбэка, встают в хвост и в этот обход не попадают.
+                for (int i = _entries.Count - 1; i >= 0; i--)
                 {
-                    Draw(in e);
-                }
-                catch (Exception ex)
-                {
-                    _entries.RemoveAt(i);
-                    Debug.LogError("[RuntimeGizmos] Исключение внутри GizmoLazy, регистрация снята.\n" + ex);
+                    var e = _entries[i];
+                    if (Dead(in e, now)) { _needSweep = true; continue; }
+
+                    // Чистое состояние на запись: иначе порядок регистраций стал бы значимым.
+                    Gizmo.ResetState();
+
+                    try
+                    {
+                        Draw(in e);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (i < _entries.Count) Kill(i);
+                        Debug.LogError("[RuntimeGizmos] Исключение внутри GizmoLazy, регистрация снята.\n" + ex);
+                    }
                 }
             }
+            finally
+            {
+                _ticking = false;
+                saved.Dispose();
+            }
+
+            if (_needSweep) Sweep(now);
+        }
+
+        static void Sweep(float now)
+        {
+            _needSweep = false;
+            for (int i = _entries.Count - 1; i >= 0; i--)
+                if (Dead(_entries[i], now)) _entries.RemoveAt(i);
         }
 
         static void Draw(in Entry e)

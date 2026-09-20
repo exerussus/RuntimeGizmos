@@ -1,3 +1,8 @@
+// Файл компилируется, только если в проекте включён модуль com.unity.modules.physics2d: символ RG_PHYSICS2D
+// выставляет versionDefines в RuntimeGizmos.asmdef. Раньше предлагалось «модуль выключен —
+// удалите файл», но у пакета, поставленного по git URL, удалять нечего: PackageCache
+// неизменяем, и выключенный модуль ронял компиляцию всей сборки RuntimeGizmos.
+#if RG_PHYSICS2D
 using System.Collections.Generic;
 using UnityEngine;
 using Cond = System.Diagnostics.ConditionalAttribute;
@@ -5,8 +10,8 @@ using Cond = System.Diagnostics.ConditionalAttribute;
 namespace RuntimeGizmos.Extensions
 {
     /// <summary>
-    /// Расширения для UnityEngine.Physics2DModule. Отдельный файл: модуль выключен —
-    /// удаляется он один.
+    /// Расширения для UnityEngine.Physics2DModule. Модуль выключен — файл не компилируется
+    /// (см. шапку).
     ///
     /// Формы строятся точками и рисуются ломаной, а не дугами: так контур гарантированно
     /// замкнут и не зависит от направления отсчёта угла в <see cref="Gizmo.DrawWireArc"/>.
@@ -172,7 +177,7 @@ namespace RuntimeGizmos.Extensions
                 Gizmo.DrawWireDisc(p, Vector3.forward, radius);
                 // Штрих показывает знак вращения.
                 Gizmo.DrawArrow(p, p + Vector3.right * (radius * Mathf.Sign(w)));
-                Gizmo.DrawText(w.ToString("0.#") + " deg/s", p, 12f, new Vector2(0f, 14f));
+                Gizmo.DrawNumber(default, w, "0.#", " deg/s", p, 12f, new Vector2(0f, 14f));
             }
         }
 
@@ -200,35 +205,6 @@ namespace RuntimeGizmos.Extensions
             using (Gizmo.Scope(c)) Gizmo.DrawHit(hit.point, hit.normal, size);
         }
     }
-
-    /// <summary>Расширения для UnityEngine.AudioModule.</summary>
-    public static class GizmoAudioExtensions
-    {
-        const string EDITOR = "UNITY_EDITOR";
-        const string DEV = "DEVELOPMENT_BUILD";
-        const string ALWAYS = "RUNTIME_GIZMOS_ALWAYS";
-
-        /// <summary>minDistance и maxDistance двумя сферами.</summary>
-        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
-        public static void DrawDistances(this AudioSource src, Color c)
-        {
-            if (src == null) return;
-            var p = src.transform.position;
-
-            var inner = c;
-            var outer = new Color(c.r, c.g, c.b, c.a * 0.35f);
-
-            using (Gizmo.Scope(inner))
-            {
-                Gizmo.DrawWireSphere(p, src.minDistance);
-                Gizmo.DrawText("min " + src.minDistance.ToString("0.##"),
-                               p + Vector3.up * src.minDistance, 12f);
-
-                Gizmo.color = outer;
-                Gizmo.DrawWireSphere(p, src.maxDistance);
-                Gizmo.DrawText("max " + src.maxDistance.ToString("0.##"),
-                               p + Vector3.up * src.maxDistance, 12f);
-            }
-        }
-    }
 }
+
+#endif // RG_PHYSICS2D

@@ -57,6 +57,11 @@ namespace RuntimeGizmos.Internal
         internal static bool Enabled = true;
         internal static Color32 Color = new Color32(255, 255, 255, 255);
         internal static float Width;      // <=1 → тонкая линия (MeshTopology.Lines)
+
+        // Толщину никто не выставлял — в Width лежит дефолт платформы. Нужен Ensure: тот обязан
+        // подтянуть свежий дефолт (платформа могла уточниться, см. RedetectPlatform), но не
+        // имеет права затирать значение, которое пользователь выставил до первого Draw*.
+        internal static bool WidthIsDefault = true;
         internal static int Z;            // 0 = с тестом глубины, 1 = поверх всего
         internal static float Duration;   // 0 = один кадр
         internal static float Dash;       // период пунктира в юнитах, 0 = сплошная
@@ -92,6 +97,11 @@ namespace RuntimeGizmos.Internal
         static Material[] _thinMat, _wideMat, _triMat, _meshMat, _iconMat, _screenMat;
 
         static readonly Dictionary<GizmoObjectId, GizmoTexturedBatch> _icons = new Dictionary<GizmoObjectId, GizmoTexturedBatch>();
+
+        // Иконки «поверх всего» (Gizmo.depthTest = false). Раньше батч ключевался одной
+        // текстурой и всегда рисовался материалом с тестом глубины: второй материал
+        // создавался, но не использовался, и depthTest на иконки не действовал.
+        static readonly Dictionary<GizmoObjectId, GizmoTexturedBatch> _iconsTop = new Dictionary<GizmoObjectId, GizmoTexturedBatch>();
         static readonly Dictionary<GizmoObjectId, GizmoTexturedBatch> _screen = new Dictionary<GizmoObjectId, GizmoTexturedBatch>();
 
         static GizmoMeshCmdList _meshFront = new GizmoMeshCmdList();
@@ -130,6 +140,12 @@ namespace RuntimeGizmos.Internal
         {
             if (_ready || _failed) return;
 
+            // Платформа кэшируется при первом обращении к настройкам, а оно случается на
+            // SubsystemRegistration — раньше, чем XR Management поднимает загрузчик. К первому
+            // Draw* устройство уже активно, поэтому перепроверяем здесь: иначе профиль XR
+            // автоматически не выбирался никогда, и шлем получал профиль Mobile.
+            GizmoSettings.RedetectPlatform();
+
             _linearColor = QualitySettings.activeColorSpace == ColorSpace.Linear;
             Now = Time.realtimeSinceStartup;
             GizmoPrimitives.Ensure();
@@ -143,13 +159,17 @@ namespace RuntimeGizmos.Internal
             if (unlit == null || wide == null || icon == null || screen == null || text == null)
             {
                 _failed = true;
+                _disabledByFailure = Enabled;
                 Enabled = false;
                 return;
             }
 
             _ready = true;
             _appliedAlpha = float.NaN;      // материалы пересозданы — кэш недействителен
-            Width = GizmoSettings.DefaultLineWidth;
+
+            // Раньше здесь стояло безусловное Width = DefaultLineWidth, и Gizmo.lineWidth = 3,
+            // выставленный в Awake до первого Draw*, молча сбрасывался первым же вызовом.
+            if (WidthIsDefault) Width = GizmoSettings.DefaultLineWidth;
 
             _thinMat = new Material[2];
             _wideMat = new Material[2];
@@ -230,9 +250,30 @@ namespace RuntimeGizmos.Internal
             return m;
         }
 
+        // Систему выключил неудачный Ensure, а не пользователь. Dispose снимает _failed, чтобы
+        // следующая сессия попробовала подняться заново, — но Enabled оставался false, и после
+        // починки шейдеров (или назначения URP-ассета) гизмо молчали до перезагрузки домена.
+        static bool _disabledByFailure;
+
+        // Явное слово пользователя сильнее: после него Dispose ничего сам не включает.
+        internal static void SetEnabledByUser(bool value)
+        {
+            Enabled = value;
+            _disabledByFailure = false;
+        }
+
+        // Меши, про которые уже сказано «нет Read/Write». Живёт здесь, а не в расширениях,
+        // чтобы чиститься на границе сессии вместе со всем остальным.
+        internal static readonly HashSet<GizmoObjectId> WarnedUnreadable = new HashSet<GizmoObjectId>();
+
         internal static void Dispose()
         {
             _failed = false;
+            if (_disabledByFailure)
+            {
+                _disabledByFailure = false;
+                Enabled = true;
+            }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _threadReported = false;
 #endif
@@ -242,13 +283,17 @@ namespace RuntimeGizmos.Internal
             DisposeChannels(_thin); DisposeChannels(_wide); DisposeChannels(_tri);
             DisposeChannels(_text);
             foreach (var b in _icons.Values) b.Dispose();
+            foreach (var b in _iconsTop.Values) b.Dispose();
             foreach (var b in _screen.Values) b.Dispose();
             _icons.Clear();
+            _iconsTop.Clear();
             _screen.Clear();
 
             DestroyMats(_thinMat); DestroyMats(_wideMat); DestroyMats(_triMat);
             DestroyMats(_meshMat); DestroyMats(_iconMat); DestroyMats(_screenMat);
             DestroyMats(_textMat);
+
+            WarnedUnreadable.Clear();
 
             GizmoIndexPool.Dispose();
             GizmoPrimitives.Dispose();
@@ -280,6 +325,7 @@ namespace RuntimeGizmos.Internal
             if (!_ready) return;
             for (int i = 0; i < 2; i++) { _thin[i].Clear(); _wide[i].Clear(); _tri[i].Clear(); _text[i].Clear(); }
             foreach (var b in _icons.Values) b.Channel.Clear();
+            foreach (var b in _iconsTop.Values) b.Channel.Clear();
             foreach (var b in _screen.Values) b.Channel.Clear();
             _meshFront.Clear(); _meshBack.Clear(); _meshRetained.Clear();
         }
@@ -382,11 +428,13 @@ namespace RuntimeGizmos.Internal
             }
 
             foreach (var b in _icons.Values) b.Channel.BeginFrame(strict, t, clock, stale);
+            foreach (var b in _iconsTop.Values) b.Channel.BeginFrame(strict, t, clock, stale);
             foreach (var b in _screen.Values) b.Channel.BeginFrame(strict, t, clock, stale);
 
             // Текстуру могли уничтожить — батч с ней уже ничего не нарисует, а нативные
             // буферы и меши держит. Словари крошечные, обход раз в кадр бесплатный.
             PruneDeadBatches(_icons);
+            PruneDeadBatches(_iconsTop);
             PruneDeadBatches(_screen);
 
             // отложенные меши
@@ -480,16 +528,8 @@ namespace RuntimeGizmos.Internal
                 if (_text[z].Prepare(out var tm, out _))
                     Emit(ref rp, _textMat[z], tm, textBounds);
 
-            foreach (var kv in _icons)
-                if (kv.Value.Channel.Prepare(out var m, out var b))
-                {
-                    if (kv.Value.Texture == null) continue;
-                    rp.material = _iconMat[0];
-                    rp.matProps = kv.Value.Props;
-                    rp.worldBounds = b;
-                    Graphics.RenderMesh(rp, m, 0, Matrix4x4.identity);
-                    rp.matProps = null;
-                }
+            SubmitIcons(ref rp, _icons, _iconMat[0]);
+            SubmitIcons(ref rp, _iconsTop, _iconMat[1]);
 
             if (_screen.Count > 0)
             {
@@ -534,6 +574,20 @@ namespace RuntimeGizmos.Internal
             }
         }
 
+        static void SubmitIcons(ref RenderParams rp, Dictionary<GizmoObjectId, GizmoTexturedBatch> batches, Material mat)
+        {
+            foreach (var kv in batches)
+                if (kv.Value.Channel.Prepare(out var m, out var b))
+                {
+                    if (kv.Value.Texture == null) continue;
+                    rp.material = mat;
+                    rp.matProps = kv.Value.Props;
+                    rp.worldBounds = b;
+                    Graphics.RenderMesh(rp, m, 0, Matrix4x4.identity);
+                    rp.matProps = null;
+                }
+        }
+
         static void Emit(ref RenderParams rp, Material mat, Mesh mesh, Bounds b)
         {
             rp.material = mat;
@@ -575,8 +629,11 @@ namespace RuntimeGizmos.Internal
 
         // ==================================================================== запись примитивов
 
+        // internal, а не private: экранная раскладка (GizmoHud) — такой же вход в систему,
+        // как Draw*, и обязана проходить ту же проверку. Пока она шла мимо, проект, в котором
+        // рисуется только HUD, не поднимал рендерер вовсе и оставался с пустым экраном.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        static bool Begin()
+        internal static bool Begin()
         {
             if (!Enabled) return false;
 
@@ -638,11 +695,6 @@ namespace RuntimeGizmos.Internal
             else ThinLine(a, b);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        /// <param name="worldSpace">
-        /// false — размер в пикселях, метка одинакова на любом расстоянии.
-        /// true — размер в мировых единицах, метка уменьшается с расстоянием.
-        /// </param>
         /// <param name="mode">0 — пиксели от мирового якоря, 1 — мировые единицы, 2 — пиксели экрана.</param>
         internal static unsafe void Text(ReadOnlySpan<char> text, Vector3 anchor, float size, Vector2 offset,
                                          float align, int mode = 0)
@@ -958,10 +1010,11 @@ namespace RuntimeGizmos.Internal
             if (!Begin() || tex == null) return;
 
             var id = GizmoObjectId.Of(tex);
-            if (!_icons.TryGetValue(id, out var batch))
+            var icons = Z == 0 ? _icons : _iconsTop;
+            if (!icons.TryGetValue(id, out var batch))
             {
-                batch = new GizmoTexturedBatch(tex, "icon" + id);
-                _icons[id] = batch;
+                batch = new GizmoTexturedBatch(tex, (Z == 0 ? "icon" : "iconTop") + id);
+                icons[id] = batch;
             }
             batch.Texture = tex;
 
@@ -1099,14 +1152,24 @@ namespace RuntimeGizmos.Internal
             }
 
             src.GetTriangles(_tris, submesh);
+            // Общее ребро двух треугольников кладём один раз. Раньше оно попадало в каркас
+            // дважды: индексов вдвое больше нужного, а при альфе меньше единицы внутренние
+            // рёбра накладывались сами на себя и выходили ярче граничных.
             _lines.Clear();
-            for (int i = 0; i < _tris.Count; i += 3)
+            _edges.Clear();
+            for (int i = 0; i + 2 < _tris.Count; i += 3)
             {
                 int a = _tris[i], b = _tris[i + 1], c = _tris[i + 2];
-                _lines.Add(a); _lines.Add(b);
-                _lines.Add(b); _lines.Add(c);
-                _lines.Add(c); _lines.Add(a);
+                AddEdge(a, b);
+                AddEdge(b, c);
+                AddEdge(c, a);
             }
+
+            // Clear ёмкость не отдаёт: после каркаса меша на миллион треугольников набор
+            // держал бы десятки мегабайт до конца сессии.
+            bool huge = _edges.Count > 1 << 16;
+            _edges.Clear();
+            if (huge) _edges.TrimExcess();
 
             var m = new Mesh
             {
@@ -1119,6 +1182,16 @@ namespace RuntimeGizmos.Internal
             _cache[key] = new Entry { Source = src, Wire = m };
             if (_cache.Count > PurgeAt) Purge();
             return m;
+        }
+
+        static readonly HashSet<ulong> _edges = new HashSet<ulong>();
+
+        static void AddEdge(int a, int b)
+        {
+            if (a == b) return;                                   // вырожденное ребро
+            uint lo = (uint)(a < b ? a : b), hi = (uint)(a < b ? b : a);
+            if (!_edges.Add(((ulong)hi << 32) | lo)) return;
+            _lines.Add(a); _lines.Add(b);
         }
 
         // Источник могли выгрузить — тогда каркас держать незачем. Чистим редко и только

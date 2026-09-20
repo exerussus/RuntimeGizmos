@@ -56,7 +56,13 @@ namespace RuntimeGizmos
         public static void DrawVolume(Transform t, float cornerFraction = 0.22f, float faint = 0.28f)
         {
             if (t == null) return;
-            DrawVolume(WorldBounds(t), cornerFraction, faint);
+
+            // WorldBounds уже мировые. Bounds-перегрузка пропустила бы их через Gizmo.matrix
+            // ещё раз, и при выставленной матрице объём уезжал на matrix * worldPos.
+            var prevMatrix = matrix;
+            matrix = Matrix4x4.identity;
+            try { DrawVolume(WorldBounds(t), cornerFraction, faint); }
+            finally { matrix = prevMatrix; }
         }
 
         // Плоскость задаётся нулевой компонентой полуразмера.
@@ -112,7 +118,11 @@ namespace RuntimeGizmos
                                     float width = 2f, string label = null)
         {
             if (from == null || to == null) return;
-            DrawLink(WorldBounds(from), WorldBounds(to), linkColor, width, label);
+
+            var prevMatrix = matrix;
+            matrix = Matrix4x4.identity;        // габариты уже мировые, см. DrawVolume(Transform)
+            try { DrawLink(WorldBounds(from), WorldBounds(to), linkColor, width, label); }
+            finally { matrix = prevMatrix; }
         }
 
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
@@ -121,6 +131,7 @@ namespace RuntimeGizmos
         {
             var prevColor = color;
             float prevWidth = lineWidth;
+            bool prevWidthDefault = GizmoRenderer.WidthIsDefault;
 
             color = linkColor;
             lineWidth = width;
@@ -135,8 +146,8 @@ namespace RuntimeGizmos
                 d /= dist;
 
                 // Обрезка по габаритам, чтобы линия не ныряла внутрь.
-                float start = SupportAlong(from.extents, d);
-                float end = dist - SupportAlong(to.extents, d);
+                float start = ExitDistance(from.extents, d);
+                float end = dist - ExitDistance(to.extents, d);
 
                 if (end > start + 1e-3f)
                 {
@@ -153,12 +164,27 @@ namespace RuntimeGizmos
             }
 
             color = prevColor;
-            lineWidth = prevWidth;
+            // Как в GizmoScope: «не трогали» возвращается свежим дефолтом, а не числом.
+            GizmoRenderer.Width = prevWidthDefault ? GizmoSettings.DefaultLineWidth : prevWidth;
+            GizmoRenderer.WidthIsDefault = prevWidthDefault;
         }
 
-        // Опорная функция ящика вдоль направления.
-        static float SupportAlong(Vector3 extents, Vector3 dir) =>
-            Mathf.Abs(dir.x) * extents.x + Mathf.Abs(dir.y) * extents.y + Mathf.Abs(dir.z) * extents.z;
+        // Расстояние от центра ящика до точки, где луч вдоль dir выходит через его грань.
+        //
+        // Раньше здесь стояла опорная функция (|dx|*ex + |dy|*ey + |dz|*ez) — это расстояние
+        // до касательной плоскости, оно всегда не меньше настоящего. По диагонали разница
+        // заметна: линия связи обрывалась, не дойдя до габарита, и у каждого объёма висел зазор.
+        static float ExitDistance(Vector3 extents, Vector3 dir)
+        {
+            float t = float.MaxValue;
+            float ax = Mathf.Abs(dir.x), ay = Mathf.Abs(dir.y), az = Mathf.Abs(dir.z);
+            // Ось нулевой толщины не ограничивает: у плоского габарита (Quad, зона на земле)
+            // иначе вышло бы t = 0 и линия пошла бы из центра поверх самого объёма.
+            if (ax > 1e-6f && extents.x > 1e-6f) t = Mathf.Min(t, extents.x / ax);
+            if (ay > 1e-6f && extents.y > 1e-6f) t = Mathf.Min(t, extents.y / ay);
+            if (az > 1e-6f && extents.z > 1e-6f) t = Mathf.Min(t, extents.z / az);
+            return t == float.MaxValue ? 0f : t;
+        }
 
         static void Chevron(Vector3 p, Vector3 dir, float size)
         {
@@ -182,8 +208,14 @@ namespace RuntimeGizmos
             var b = WorldBounds(t);
             var top = new Vector3(b.center.x, b.max.y, b.center.z);
 
-            if (worldHeight > 0f) DrawTextWorld(text, top + Vector3.up * worldHeight * 0.8f, worldHeight);
-            else DrawText(text, top, 14f, new Vector2(0f, 16f));
+            var prevMatrix = matrix;
+            matrix = Matrix4x4.identity;        // габариты уже мировые, см. DrawVolume(Transform)
+            try
+            {
+                if (worldHeight > 0f) DrawTextWorld(text, top + Vector3.up * worldHeight * 0.8f, worldHeight);
+                else DrawText(text, top, 14f, new Vector2(0f, 16f));
+            }
+            finally { matrix = prevMatrix; }
         }
 
         // ================================================================= путь
@@ -234,7 +266,8 @@ namespace RuntimeGizmos
             DrawArrow(origin, tip);
 
             if (label == null) return;
-            DrawText(label.Length == 0 ? len.ToString("0.##") : label, tip, 12f, new Vector2(0f, 14f));
+            if (label.Length == 0) DrawNumber(default, len, "0.##", default, tip, 12f, new Vector2(0f, 14f));
+            else DrawText(label, tip, 12f, new Vector2(0f, 14f));
         }
 
         // ================================================================= радиус
@@ -327,15 +360,33 @@ namespace RuntimeGizmos
         public static void DrawTrajectory(Vector3 origin, Vector3 velocity, float time = 3f,
                                           int steps = 24, Vector3 gravity = default)
         {
+            // Нулевая гравитация здесь означает «не задана» — так сложилось, и менять сигнатуру
+            // в патч-версии нельзя. Для настоящей невесомости есть DrawTrajectoryGravity.
+            if (gravity == default) gravity = new Vector3(0f, -9.81f, 0f);
+            DrawTrajectoryGravity(origin, velocity, gravity, time, steps);
+        }
+
+        /// <summary>
+        /// Траектория с явной гравитацией — в том числе нулевой. DrawTrajectory подменяет ноль
+        /// земной, и в невесомости (Physics.gravity = zero) вместо прямой рисует параболу;
+        /// здесь значение берётся как есть.
+        ///
+        /// Отдельное имя, а не перегрузка: у перегрузки с тем же набором типов любой вызов
+        /// с именованным gravity: стал бы неоднозначным (CS0121) и сломал бы чужой код.
+        /// </summary>
+        [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
+        public static void DrawTrajectoryGravity(Vector3 origin, Vector3 velocity, Vector3 gravity,
+                                                 float time = 3f, int steps = 24)
+        {
             if (time <= 0f) return;
             if (steps < 2) steps = 2;
-            if (gravity == default) gravity = new Vector3(0f, -9.81f, 0f);
+            var g = gravity;
 
             var prev = origin;
             for (int i = 1; i <= steps; i++)
             {
                 float t = time * i / steps;
-                var p = origin + velocity * t + gravity * (0.5f * t * t);
+                var p = origin + velocity * t + g * (0.5f * t * t);
                 DrawLine(prev, p);
                 prev = p;
             }
@@ -423,7 +474,12 @@ namespace RuntimeGizmos
             if (len < 1e-5f) return;
             d /= len;
 
-            if (overshoot < 0f) overshoot = Mathf.Abs(extensionLength) * 0.12f;
+            // Отрицательный вынос — это вынос в обратную сторону. Разворачиваем направление
+            // один раз здесь: раньше знак учитывался только в расчёте вылета, и выносная линия
+            // при extensionLength < 0 не доходила до размерной — разрыв вместо вылета.
+            if (extensionLength < 0f) { e = -e; extensionLength = -extensionLength; }
+
+            if (overshoot < 0f) overshoot = extensionLength * 0.12f;
 
             DrawLine(a + e * gap, a + e * (extensionLength + overshoot));
             DrawLine(b + e * gap, b + e * (extensionLength + overshoot));
@@ -455,8 +511,9 @@ namespace RuntimeGizmos
             Barbs(b, dir, side, s);
 
             if (label == null) return;
-            DrawText(label.Length == 0 ? len.ToString("0.##") : label,
-                     (a + b) * 0.5f + labelOffset, 13f);
+            var at = (a + b) * 0.5f + labelOffset;
+            if (label.Length == 0) DrawNumber(default, len, "0.##", default, at, 13f, Vector2.zero);
+            else DrawText(label, at, 13f);
         }
 
         // Остриё в tip, щёки назад против outward, разведены вдоль side.

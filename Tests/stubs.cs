@@ -132,8 +132,13 @@ namespace UnityEngine {
     public override bool Equals(object o)=>true; public override int GetHashCode()=>0;
     public Vector4 GetColumn(int i)=>default; }
   public struct Bounds { public Bounds(Vector3 c,Vector3 s){center=c;size=s;} public Vector3 center,size;
-    public Vector3 extents=>default; public Vector3 min=>default; public Vector3 max=>default;
-    public void Encapsulate(Vector3 p){} public void Encapsulate(Bounds b){} public void SetMinMax(Vector3 a,Vector3 b){} public void Expand(float f){} }
+    // Настоящая арифметика, а не default: иначе любая проверка, зависящая от габаритов
+    // (обрезка линии связи, зажим bounds канала), проходила бы вхолостую.
+    public Vector3 extents=>size*0.5f; public Vector3 min=>center-size*0.5f; public Vector3 max=>center+size*0.5f;
+    public void SetMinMax(Vector3 a,Vector3 b){ center=(a+b)*0.5f; size=b-a; }
+    public void Encapsulate(Vector3 p){ SetMinMax(Vector3.Min(min,p), Vector3.Max(max,p)); }
+    public void Encapsulate(Bounds b){ Encapsulate(b.min); Encapsulate(b.max); }
+    public void Expand(float f){ size=size+new Vector3(f,f,f); } }
   public struct Ray { public Ray(Vector3 o,Vector3 d){origin=o;direction=d;} public Vector3 origin,direction; }
   public struct Rect { public Rect(float x,float y,float w,float h){this.x=x;this.y=y;width=w;height=h;}
     public float x,y,width,height; public float xMax=>0; public float xMin=>0; public float yMax=>0; public float yMin=>0;
@@ -223,7 +228,7 @@ namespace UnityEngine {
     public int[] GetTriangles(int s, bool applyBase=true)=>null; public void GetTriangles(List<int> t,int s,bool applyBase=true){} public Rendering.IndexFormat indexFormat;
     public void SetIndices(int[] i,Rendering.MeshTopology t,int s,bool calc=true,int baseVertex=0){}
     public void SetIndices(System.Collections.Generic.List<int> i,Rendering.MeshTopology t,int s,bool calc=true,int baseVertex=0){} }
-  public class Transform : Component { public Vector3 position; public Quaternion rotation; public Matrix4x4 localToWorldMatrix; public Vector3 lossyScale;
+  public class Transform : Component { public Vector3 position; public Quaternion rotation; public Matrix4x4 localToWorldMatrix; public Vector3 lossyScale; public Matrix4x4 worldToLocalMatrix;
     public Vector3 localPosition, localScale, forward; public void SetParent(Transform p,bool w){}
     public T[] GetComponentsInChildren<T>() where T : Component => new T[0];
     public void GetComponentsInChildren<T>(List<T> r) where T : Component {}
@@ -244,7 +249,7 @@ namespace UnityEngine {
   public enum RuntimePlatform { OSXEditor, OSXPlayer, WindowsPlayer, WindowsEditor, IPhonePlayer, Android, LinuxPlayer, LinuxEditor, WebGLPlayer, PS4, PS5, XboxOne, GameCoreXboxOne, GameCoreXboxSeries, Switch, tvOS }
   public static class Time { public static int frameCount=0; public static float realtimeSinceStartup=0f; public static float deltaTime=0.016f; public static float timeScale=1f; public static float time=0f; public static float unscaledTime=0f; }
   public static class QualitySettings { public static ColorSpace activeColorSpace=ColorSpace.Linear; }
-  public static class Resources { public static T Load<T>(string p) where T : Object => null; }
+  public static class Resources { public static int LoadCalls; public static T Load<T>(string p) where T : Object { LoadCalls++; return null; } }
   public static class Screen { public static int width=>1920; public static int height=>1080; public static float dpi=>0; }
   public static class SystemInfo { public static bool usesReversedZBuffer=true; public static int systemMemorySize=>0; }
   public static class Graphics { public static int Calls; public static readonly List<Mesh> Last = new List<Mesh>();
@@ -293,6 +298,7 @@ namespace UnityEngine.Rendering {
   public struct ScriptableRenderContext {}
   public static class RenderPipelineManager { public static event Action<ScriptableRenderContext,Camera> beginCameraRendering; }
 }
+namespace UnityEngine.XR { public static class XRSettings { public static bool enabled, isDeviceActive; } }
 namespace UnityEngine.LowLevel {
   public struct PlayerLoopSystem { public Type type; public PlayerLoopSystem[] subSystemList; public Action updateDelegate; }
   public static class PlayerLoop {
