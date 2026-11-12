@@ -32,6 +32,53 @@ namespace RuntimeGizmos
         static readonly List<Entry> _entries = new List<Entry>(32);
         static bool _overflowWarned;
 
+        // Ключ записи → её индекс в _entries.
+        //
+        // Регистрацию зовут из Update, на каждую цель каждый кадр. Раньше поиск шёл перебором
+        // списка, и индексатор List отдавал копию стобайтной Entry на каждой итерации:
+        // 256 целей стоили полмиллисекунды за кадр, 1024 — семь с половиной, а отвергнутые
+        // сверх MaxTracked вызовы проходили весь список впустую. Порядок записей нужен
+        // обходу в Tick, поэтому список остаётся, а словарь только указывает в него.
+        // Индексы сдвигает лишь физическое удаление — после него индекс пересобирается.
+        static readonly Dictionary<EntryKey, int> _index = new Dictionary<EntryKey, int>(32);
+
+        internal readonly struct EntryKey : IEquatable<EntryKey>
+        {
+            readonly GizmoObjectId _target;
+            readonly string _key;
+            readonly int _line;
+            readonly GizmoLazyKind _kind;
+
+            public EntryKey(GizmoObjectId target, string key, int line, GizmoLazyKind kind)
+            {
+                _target = target; _key = key; _line = line; _kind = kind;
+            }
+
+            public bool Equals(EntryKey o) =>
+                _target == o._target && _line == o._line && _kind == o._kind && string.Equals(_key, o._key);
+
+            public override bool Equals(object obj) => obj is EntryKey k && Equals(k);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int h = _target.GetHashCode();
+                    h = h * 397 ^ _line;
+                    h = h * 397 ^ (int)_kind;
+                    return h * 397 ^ (_key != null ? _key.GetHashCode() : 0);
+                }
+            }
+        }
+
+        static EntryKey KeyOf(in Entry e) => new EntryKey(e.TargetId, e.Key, e.Line, e.Kind);
+
+        static void RebuildIndex()
+        {
+            _index.Clear();
+            for (int i = 0; i < _entries.Count; i++) _index[KeyOf(_entries[i])] = i;
+        }
+
         public static int Count => _entries.Count;
 
         public static void Add(in GizmoLazyTarget src, GizmoLazyKind kind, string file, int line,
@@ -49,10 +96,10 @@ namespace RuntimeGizmos
             var id = GizmoObjectId.Of(src.Target);
 
             // Вид команды входит в ключ: разные команды с одной строки не затирают друг друга.
-            for (int i = 0; i < _entries.Count; i++)
+            var k = new EntryKey(id, key, line, kind);
+            if (_index.TryGetValue(k, out int i))
             {
                 var e = _entries[i];
-                if (e.TargetId != id || e.Kind != kind || e.Line != line || e.Key != key) continue;
                 Fill(ref e, src, kind, key, line, color, a, b, text, rf, custom);
                 _entries[i] = e;
                 return;
@@ -73,6 +120,7 @@ namespace RuntimeGizmos
 
             var n = new Entry();
             Fill(ref n, src, kind, key, line, color, a, b, text, rf, custom);
+            _index[k] = _entries.Count;
             _entries.Add(n);
         }
 
@@ -128,6 +176,7 @@ namespace RuntimeGizmos
         {
             if (target == null) return;
             var id = GizmoObjectId.Of(target);
+            bool removed = false;
 
             for (int i = _entries.Count - 1; i >= 0; i--)
             {
@@ -135,8 +184,10 @@ namespace RuntimeGizmos
                 if (key != null && _entries[i].Key != key) continue;
 
                 if (_ticking) Kill(i);
-                else _entries.RemoveAt(i);
+                else { _entries.RemoveAt(i); removed = true; }
             }
+
+            if (removed) RebuildIndex();
         }
 
         public static void Clear()
@@ -150,6 +201,7 @@ namespace RuntimeGizmos
             }
 
             _entries.Clear();
+            _index.Clear();
         }
 
         // Есть что убирать. Без флага Sweep каждый кадр перепроверял бы Unity-null у каждой
@@ -236,8 +288,10 @@ namespace RuntimeGizmos
         static void Sweep(float now)
         {
             _needSweep = false;
+            int before = _entries.Count;
             for (int i = _entries.Count - 1; i >= 0; i--)
                 if (Dead(_entries[i], now)) _entries.RemoveAt(i);
+            if (_entries.Count != before) RebuildIndex();
         }
 
         static void Draw(in Entry e)

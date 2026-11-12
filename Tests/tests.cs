@@ -2909,7 +2909,70 @@ public static class Tests
             GizmoSettings.SetCategory(Off, true);
             Gizmo.Reset();
         }
+
+        Group("AF. Ревью 12.11: индекс реестра GizmoLazy");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            int maxWas = GizmoLazy.MaxTracked;
+            GizmoLazy.MaxTracked = 4096;
+            var gs = new GameObject[300];
+            for (int i = 0; i < gs.Length; i++) gs[i] = new GameObject();
+
+            for (int f = 0; f < 3; f++) for (int i = 0; i < gs.Length; i++) LazyAxes(gs[i], 1f + f);
+            Check("AF15 повтор из Update заменяет, а не копит", GizmoLazy.Count == gs.Length, "" + GizmoLazy.Count);
+
+            GizmoLazy.Untrack(gs[10]);
+            for (int i = 0; i < gs.Length; i++) LazyAxes(gs[i], 7f);
+            Check("AF16 после Untrack из середины индексы верны: ни одной копии", GizmoLazy.Count == gs.Length,
+                  "" + GizmoLazy.Count);
+
+            var reg = Priv<System.Collections.IList>(typeof(Registry), "_entries");
+            bool fresh = true;
+            foreach (var o in reg) if (((Registry.Entry)o).A != 7f) fresh = false;
+            Check("AF17 обновлена именно найденная запись", fresh);
+
+            UnityEngine.Object.Destroy(gs[0]); UnityEngine.Object.Destroy(gs[150]);
+            Registry.Tick();
+            for (int i = 1; i < gs.Length; i++) if (i != 150) LazyAxes(gs[i], 9f);
+            Check("AF18 после выметания мёртвых индекс пересобран", GizmoLazy.Count == gs.Length - 2,
+                  "" + GizmoLazy.Count);
+
+            // Снятие изнутри обхода и повторная регистрация в том же кадре.
+            var self = new GameObject();
+            GizmoLazy.Track(self).Draw(() => { GizmoLazy.Untrack(self); LazyAxes(self, 3f); });
+            Registry.Tick();
+            int selfCount = 0;
+            foreach (var o in reg) if (((Registry.Entry)o).Target == self) selfCount++;
+            Check("AF19 снялся и встал заново из своего колбэка — одна запись Axes", selfCount == 1, "" + selfCount);
+
+            // Масштаб: при квадратичном поиске 4× целей стоили бы 16× времени.
+            double PerFrame(int n)
+            {
+                Registry.Clear();
+                var t = new GameObject[n]; for (int i = 0; i < n; i++) t[i] = new GameObject();
+                for (int i = 0; i < n; i++) LazyAxes(t[i], 1f);
+                double best = double.MaxValue;
+                for (int r = 0; r < 5; r++)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    for (int f = 0; f < 10; f++) for (int i = 0; i < n; i++) LazyAxes(t[i], 1f);
+                    best = Math.Min(best, sw.Elapsed.TotalMilliseconds);
+                }
+                return best;
+            }
+            PerFrame(256);
+            double t256 = PerFrame(256), t1024 = PerFrame(1024);
+            Check("AF20 регистрация растёт линейно, а не квадратично", t1024 / t256 < 8.0,
+                  $"256: {t256:0.00} мс, 1024: {t1024:0.00} мс, x{t1024 / t256:0.0}");
+
+            Registry.Clear();
+            GizmoLazy.MaxTracked = maxWas;
+        }
     }
+
+    // Обёртка держит одну и ту же строку вызова: ключ регистрации включает место вызова.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    static void LazyAxes(GameObject g, float size) => GizmoLazy.Track(g).Axes(size);
 
     // Меш, который канал отдаёт в этом кадре, побайтно равен retained + кадровому снимку.
     static unsafe bool MeshMatches<T>(GizmoChannel<T> ch, out string why) where T : unmanaged
