@@ -2968,6 +2968,58 @@ public static class Tests
             Registry.Clear();
             GizmoLazy.MaxTracked = maxWas;
         }
+
+        Group("AF. Ревью 12.11: дуги поворотом на шаг");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            var thin = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            Gizmo.lineWidth = 1f;
+            float worst = 0f; bool counts = true;
+            var cases = new (Vector3 n, Vector3 from, float ang, float r)[]
+            {
+                (Vector3.up, Vector3.right, 360f, 2f), (Vector3.up, Vector3.forward, 90f, 1f),
+                (new Vector3(1, 2, 3), Vector3.up, -180f, 0.5f), (Vector3.forward, Vector3.right, 37f, 10f),
+                (Vector3.right, Vector3.up, 720f, 3f),
+            };
+            foreach (var cs in cases)
+            {
+                thin[0].Clear();
+                Gizmo.DrawWireArc(Vector3.one, cs.n, cs.from, cs.ang, cs.r);
+                // Эталон — прежняя формула: синус и косинус на каждую точку.
+                var n = cs.n.normalized;
+                var f = (cs.from - Vector3.Dot(cs.from, n) * n).normalized;
+                var side = Vector3.Cross(n, f);
+                int seg = Mathf.Max(2, Mathf.CeilToInt(GizmoPrimitives.CircleSegments * Mathf.Abs(cs.ang) / 360f));
+                float step = cs.ang * Mathf.Deg2Rad / seg;
+                var buf = thin[0].Target(false);
+                if (buf.Count != seg * 2) { counts = false; continue; }
+                unsafe
+                {
+                    for (int i = 0; i < seg; i++)
+                    {
+                        var e0 = Vector3.one + (f * Mathf.Cos(step * i) + side * Mathf.Sin(step * i)) * cs.r;
+                        var e1 = Vector3.one + (f * Mathf.Cos(step * (i + 1)) + side * Mathf.Sin(step * (i + 1))) * cs.r;
+                        worst = Math.Max(worst, (buf.Ptr[2 * i].Position - e0).magnitude / cs.r);
+                        worst = Math.Max(worst, (buf.Ptr[2 * i + 1].Position - e1).magnitude / cs.r);
+                    }
+                }
+            }
+            Check("AF21 число сегментов дуги прежнее", counts);
+            Check("AF22 точки совпадают с формулой sin/cos", worst < 1e-4f, "отклонение " + worst + " радиуса");
+
+            thin[0].Clear();
+            Gizmo.DrawWireDisc(Vector3.zero, Vector3.up, 1f);
+            Vector3 p0, pl; unsafe { var b = thin[0].Target(false); p0 = b.Ptr[0].Position; pl = b.Ptr[b.Count - 1].Position; }
+            Check("AF23 окружность замкнута без шва", p0 == pl);
+
+            const int Off = 1 << 8;
+            GizmoSettings.SetCategory(Off, false);
+            thin[0].Clear();
+            using (Gizmo.Category(Off)) Gizmo.DrawWireCapsule(Vector3.zero, Vector3.up, 0.5f);
+            Check("AF24 дуги в выключенной категории не пишут", thin[0].Target(false).Count == 0);
+            GizmoSettings.SetCategory(Off, true);
+            Gizmo.Reset();
+        }
     }
 
     // Обёртка держит одну и ту же строку вызова: ключ регистрации включает место вызова.

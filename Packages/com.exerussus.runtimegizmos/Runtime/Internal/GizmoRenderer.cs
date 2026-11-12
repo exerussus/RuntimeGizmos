@@ -866,6 +866,19 @@ namespace RuntimeGizmos.Internal
             else ThinLine(a, b);
         }
 
+        /// <summary>
+        /// Отрезок без входной проверки. Для составных фигур, которые один раз прошли Begin()
+        /// и дальше пишут сегмент за сегментом: проверка потока, категории и подъёма рендерера
+        /// на каждом из 32 сегментов окружности — та же самая работа 32 раза.
+        /// Звать только после Begin() == true в том же вызове.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void LineAfterBegin(in Vector3 a, in Vector3 b)
+        {
+            if (Width > 1f) WideLine(a, b);
+            else ThinLine(a, b);
+        }
+
         /// <param name="mode">0 — пиксели от мирового якоря, 1 — мировые единицы, 2 — пиксели экрана.</param>
         internal static unsafe void Text(ReadOnlySpan<char> text, Vector3 anchor, float size, Vector2 offset,
                                          float align, int mode = 0)

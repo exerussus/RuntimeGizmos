@@ -697,12 +697,26 @@ namespace RuntimeGizmos
             int seg = Mathf.Max(2, Mathf.CeilToInt(GizmoPrimitives.CircleSegments * Mathf.Abs(angleDeg) / 360f));
             float step = angleDeg * Mathf.Deg2Rad / seg;
 
-            Vector3 prev = Xf(center + from * radius);
+            // Одна входная проверка на всю дугу, а не на каждый сегмент.
+            if (!GizmoRenderer.Begin()) return;
+
+            // Точки — поворотом на шаг, а не синусом и косинусом каждой: тригонометрия одна
+            // на дугу. Накопленная ошибка за 256 шагов — порядка 1e-5 радиуса; у полной
+            // окружности последнюю точку всё равно берём равной первой, чтобы шва не было.
+            float cs = Mathf.Cos(step), sn = Mathf.Sin(step);
+            float c = 1f, s = 0f;
+            bool closed = Mathf.Abs(Mathf.Abs(angleDeg) - 360f) < 1e-3f;
+
+            Vector3 first = Xf(center + from * radius);
+            Vector3 prev = first;
             for (int i = 1; i <= seg; i++)
             {
-                float a = step * i;
-                Vector3 p = Xf(center + (from * Mathf.Cos(a) + side * Mathf.Sin(a)) * radius);
-                GizmoRenderer.Line(prev, p);
+                float nc = c * cs - s * sn;
+                s = s * cs + c * sn;
+                c = nc;
+
+                Vector3 p = closed && i == seg ? first : Xf(center + (from * c + side * s) * radius);
+                GizmoRenderer.LineAfterBegin(prev, p);
                 prev = p;
             }
         }
