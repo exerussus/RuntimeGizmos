@@ -22,10 +22,10 @@ namespace RuntimeGizmos
     public static class GizmoLazy
     {
         /// <summary>Общий выключатель слоя. Базового слоя не касается.</summary>
-        public static bool Enabled = true;
+        public static bool Enabled { get; set; } = true;
 
         /// <summary>Потолок живых регистраций.</summary>
-        public static int MaxTracked = 256;
+        public static int MaxTracked { get; set; } = 256;
 
         /// <summary>Сколько регистраций живо сейчас.</summary>
         public static int Count => Registry.Count;
