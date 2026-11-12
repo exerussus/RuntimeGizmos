@@ -97,6 +97,14 @@ namespace RuntimeGizmos.Internal
         int _retainedVersion = 1;
         readonly int[] _meshRetainedVersion = new int[2];
 
+        // Версия растёт на каждый примитив с duration и за долгую сессию может обернуться.
+        // Ноль занят под «в меше префикса нет» — его пропускаем, иначе свежий меш однажды
+        // посчитал бы себя актуальным и остался без статики.
+        void BumpRetained()
+        {
+            if (++_retainedVersion == 0) _retainedVersion = 1;
+        }
+
         public GizmoChannel(string name, VertexAttributeDescriptor[] layout, MeshTopology topology,
             int primVerts, int initialCapacity, float boundsPadding = 0f)
         {
@@ -143,7 +151,7 @@ namespace RuntimeGizmos.Internal
             if (!retained) return _back;
             _retainedTouched = true;
             _dirty = true;
-            _retainedVersion++;
+            BumpRetained();
             return _retained;
         }
 
@@ -237,7 +245,7 @@ namespace RuntimeGizmos.Internal
             if (w != n)                     // что-то выбыло — меш пора перезалить
             {
                 _dirty = true;
-                _retainedVersion++;
+                BumpRetained();
             }
             _minExpiry = minExpiry;
             _retainedTouched = false;
@@ -425,7 +433,7 @@ namespace RuntimeGizmos.Internal
             _dirty = true;
             _retainedTouched = false;
             _minExpiry = float.MaxValue;
-            _retainedVersion++;
+            BumpRetained();
         }
 
         public void Dispose()
