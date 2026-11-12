@@ -280,7 +280,8 @@ namespace UnityEngine {
     public static void RenderMesh(in Rendering.RenderParams rp, Mesh m, int sub, Matrix4x4 mtx){
       if (m == null) throw new ArgumentNullException("mesh");
       if (sub < 0 || sub >= Math.Max(1,m.subMeshCount)) throw new ArgumentOutOfRangeException("submesh="+sub+" count="+m.subMeshCount);
-      Calls++; if (Record) Last.Add(m); } }
+      Calls++; LastBounds = rp.worldBounds; if (Record) Last.Add(m); }
+    public static Bounds LastBounds; }
   public class ScriptableObject : Object { public static T CreateInstance<T>() where T : ScriptableObject => null; }
   public class GUIContent { public GUIContent(){} public GUIContent(string t){ text=t; }
     public static GUIContent none=>null; public Texture image; public string text; }

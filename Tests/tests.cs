@@ -3082,6 +3082,21 @@ public static class Tests
             Mesh.MirrorData = false; Graphics.Record = true;
             Gizmo.Reset();
         }
+
+        Group("AF. Ревью 12.11: иконки не отсекаются по центру");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            var cam = new Camera { cameraType = CameraType.Game }; cam.transform = new Transform();
+            cam.transform.position = new Vector3(1, 2, 3);
+            var tex = new Texture2D();
+            Gizmo.DrawIcon(new Vector3(10, 0, 0), tex, false, Color.white, 64f);
+            Tick(30000f);
+            GizmoRenderer.Submit(cam);
+            var b = Graphics.LastBounds;
+            Check("AF33 бокс иконки — вокруг камеры, а не точка центра",
+                  b.extents.x > 100f && (b.center - cam.transform.position).magnitude < 1e-4f,
+                  "center " + b.center + " extents " + b.extents);
+        }
     }
 
     // Обёртка держит одну и ту же строку вызова: ключ регистрации включает место вызова.

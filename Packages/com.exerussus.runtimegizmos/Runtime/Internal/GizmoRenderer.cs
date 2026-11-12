@@ -657,14 +657,18 @@ namespace RuntimeGizmos.Internal
                     if (z == ZGhost) Emit(ref rp, _textMatOcc, tm, textBounds);
                 }
 
-            SubmitIcons(ref rp, _icons, _iconMat[0]);
-            SubmitIcons(ref rp, _iconsTop, _iconMat[1]);
+            // Иконки, как и текст, отсекаются боксом вокруг камеры, а не своими габаритами.
+            // Канал знает только центры квадов: размер у них в пикселях (или в мире, но
+            // разворачивается шейдером), и бокс из центров отсекал иконку целиком, стоило
+            // её центру выйти за край кадра, — хотя половина ещё была видна.
+            var camBounds = new Bounds(cam.transform.position, new Vector3(1e4f, 1e4f, 1e4f));
+            SubmitIcons(ref rp, _icons, _iconMat[0], camBounds);
+            SubmitIcons(ref rp, _iconsTop, _iconMat[1], camBounds);
 
             if (_screen.Count > 0)
             {
                 // Экранная геометрия задаётся прямо в клип-пространстве, поэтому
                 // ограничивающий бокс привязываем к камере, иначе её отсечёт куллинг.
-                var camBounds = new Bounds(cam.transform.position, new Vector3(1e4f, 1e4f, 1e4f));
                 foreach (var kv in _screen)
                     if (kv.Value.Channel.Prepare(out var m, out _))
                     {
@@ -716,15 +720,16 @@ namespace RuntimeGizmos.Internal
             _meshMatOcc.SetFloat(AlphaId, occ);
         }
 
-        static void SubmitIcons(ref RenderParams rp, Dictionary<GizmoObjectId, GizmoTexturedBatch> batches, Material mat)
+        static void SubmitIcons(ref RenderParams rp, Dictionary<GizmoObjectId, GizmoTexturedBatch> batches,
+                                Material mat, Bounds camBounds)
         {
             foreach (var kv in batches)
-                if (kv.Value.Channel.Prepare(out var m, out var b))
+                if (kv.Value.Channel.Prepare(out var m, out _))
                 {
                     if (kv.Value.Texture == null) continue;
                     rp.material = mat;
                     rp.matProps = kv.Value.Props;
-                    rp.worldBounds = b;
+                    rp.worldBounds = camBounds;
                     Graphics.RenderMesh(rp, m, 0, Matrix4x4.identity);
                     rp.matProps = null;
                     _drawCalls++;
