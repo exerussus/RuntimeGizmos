@@ -2069,7 +2069,11 @@ public static class Tests
 
             Mesh.ResetCounters();
             Tick(12000.048f); GizmoRenderer.Submit(camZ);
-            Check("Z12 исчезновение кадровой части тоже перезаливает", Mesh.UpCalls > 0, "заливок=" + Mesh.UpCalls);
+            // Перезаливать тут нечего: retained-префикс в меше кольца уже свежий, достаточно
+            // укоротить submesh. Проверяем результат, а не способ.
+            thinZ[0].Prepare(out var z12m, out _);
+            Check("Z12 исчезновение кадровой части доходит до меша", z12m != null && z12m.Sub.vertexCount == 2,
+                  "в submesh " + (z12m == null ? -1 : z12m.Sub.vertexCount));
 
             Mesh.ResetCounters();
             Tick(12000.064f); GizmoRenderer.Submit(camZ);
@@ -2793,10 +2797,99 @@ public static class Tests
             GizmoSettings.SetCategory(CatA, true);
         }
 
+        ReviewNov();
+
         Console.WriteLine("\n═══════════════════════════════════");
         Console.WriteLine($"  прошло {_pass}, упало {_fail}");
         Console.WriteLine("═══════════════════════════════════");
         return _fail == 0 ? 0 : 1;
+    }
+
+
+    // ==================================================== AF. ревью 12.11
+    //
+    // Каждая подгруппа закрывает одну находку ревью: сначала то, что раньше было не так,
+    // потом то, что исправление не сломало соседнее.
+    static void ReviewNov()
+    {
+        Group("AF. Ревью 12.11: retained не перезаливается из-за кадровой геометрии");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            Graphics.Record = false;
+            Mesh.MirrorData = true;
+            Gizmo.lineWidth = 1f;
+            var cam = new Camera { cameraType = CameraType.Game }; cam.transform = new Transform();
+            var thin = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            float t = 5000f;
+            void Frame(int dyn) { for (int i = 0; i < dyn; i++) Gizmo.DrawLine(Vector3.zero, new Vector3(i, 1, 0)); t += 0.016f; Tick(t); GizmoRenderer.Submit(cam); }
+
+            Gizmo.duration = 1e6f;
+            for (int i = 0; i < 200; i++) Gizmo.DrawWireSphere(new Vector3(i, 0, 0), 0.5f);
+            Gizmo.duration = 0f;
+            Frame(1); Frame(1); Frame(1);
+
+            Mesh.ResetCounters();
+            bool same = true; string why = "";
+            for (int f = 0; f < 20; f++) { Frame(1); if (same) same = MeshMatches(thin[0], out why); }
+            Check("AF1 статика + одна динамическая линия: заливается только линия", Mesh.UpVerts == 20 * 2,
+                  "залито вершин за 20 кадров: " + Mesh.UpVerts);
+            Check("AF2 содержимое меша = retained + кадровое", same, why);
+
+            // Правка retained: обе половины кольца обязаны получить свежий префикс.
+            Gizmo.duration = 1e6f; Gizmo.DrawWireSphere(new Vector3(0, 9, 0), 2f); Gizmo.duration = 0f;
+            same = true;
+            for (int f = 0; f < 4; f++) { Frame(3); if (same) same = MeshMatches(thin[0], out why); }
+            Check("AF3 после дописывания в retained оба меша кольца свежие", same, why);
+
+            // Рост из-за кадровой геометрии пересоздаёт буфер — префикс должен вернуться.
+            same = true;
+            Frame(6000); if (same) same = MeshMatches(thin[0], out why);
+            Frame(6000); if (same) same = MeshMatches(thin[0], out why);
+            Frame(1); if (same) same = MeshMatches(thin[0], out why);
+            Check("AF4 рост буфера от кадровой геометрии не теряет retained", same, why);
+
+            // Выбывание со сдвигом: короткоживущий примитив в середине retained.
+            Gizmo.duration = 0.05f; Gizmo.DrawLine(Vector3.zero, Vector3.up * 3); Gizmo.duration = 1e6f;
+            Gizmo.DrawLine(Vector3.zero, Vector3.right * 3); Gizmo.duration = 0f;
+            same = true;
+            for (int f = 0; f < 10; f++) { Frame(2); if (same) same = MeshMatches(thin[0], out why); }
+            Check("AF5 выбывание из середины retained доходит до обоих мешей", same, why);
+
+            // Clear и новая статика того же размера: версия обязана смениться и тут.
+            Gizmo.Clear();
+            Gizmo.duration = 1e6f;
+            for (int i = 0; i < 201; i++) Gizmo.DrawWireSphere(new Vector3(0, i, 0), 0.25f);
+            Gizmo.duration = 0f;
+            same = true;
+            for (int f = 0; f < 4; f++) { Frame(1); if (same) same = MeshMatches(thin[0], out why); }
+            Check("AF6 после Gizmo.Clear префикс перезалит", same, why);
+
+            // Чистая статика по-прежнему не стоит ничего.
+            Frame(0); Frame(0);
+            Mesh.ResetCounters();
+            for (int f = 0; f < 10; f++) Frame(0);
+            Check("AF7 статика без кадровой геометрии: ноль заливок", Mesh.UpVerts == 0, "" + Mesh.UpVerts);
+
+            Mesh.MirrorData = false;
+            Graphics.Record = true;
+            Gizmo.Reset();
+        }
+    }
+
+    // Меш, который канал отдаёт в этом кадре, побайтно равен retained + кадровому снимку.
+    static unsafe bool MeshMatches<T>(GizmoChannel<T> ch, out string why) where T : unmanaged
+    {
+        why = "";
+        if (!ch.Prepare(out var m, out _)) { why = "меша нет"; return false; }
+        if (m.Data == null) { why = "зеркало выключено"; return false; }
+        var front = (GizmoNativeBuffer<T>)ch.GetType().GetField("_front", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(ch);
+        var ret = ch.Retained;
+        int stride = sizeof(T);
+        int rb = ret.Count * stride, fb = front.Count * stride;
+        if (m.Sub.vertexCount != ret.Count + front.Count) { why = "submesh " + m.Sub.vertexCount + " против " + (ret.Count + front.Count); return false; }
+        if (!new ReadOnlySpan<byte>(ret.Ptr, rb).SequenceEqual(new ReadOnlySpan<byte>(m.Data, 0, rb))) { why = "retained-префикс устарел"; return false; }
+        if (!new ReadOnlySpan<byte>(front.Ptr, fb).SequenceEqual(new ReadOnlySpan<byte>(m.Data, rb, fb))) { why = "кадровая часть не совпала"; return false; }
+        return true;
     }
 
     // ---- вспомогательное

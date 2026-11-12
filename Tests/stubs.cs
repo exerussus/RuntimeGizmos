@@ -212,13 +212,21 @@ namespace UnityEngine {
     public static long UpVerts, UpBytes, IdxBytes; public static int UpCalls, IdxCalls, ParamCalls;
     public static void ResetCounters(){ UpVerts=UpBytes=IdxBytes=0; UpCalls=IdxCalls=ParamCalls=0; }
 
+    // Зеркало содержимого вершинного буфера. Включается кейсами, которым важны сами байты
+    // в меше, а не только счётчики: заливка бывает частичной (retained-префикс остаётся
+    // с прошлых кадров), и проверить, что префикс не устарел, можно только сравнением.
+    // SetVertexBufferParams, как и в Unity, содержимое теряет.
+    public static bool MirrorData; public byte[] Data;
+
     public void SetVertexBufferParams(int c, params Rendering.VertexAttributeDescriptor[] a){
-      VBCap=c; VertStride=0; foreach(var x in a) VertStride+=x.ByteSize; Writes.Clear(); ParamCalls++; }
+      VBCap=c; VertStride=0; foreach(var x in a) VertStride+=x.ByteSize; Writes.Clear(); ParamCalls++;
+      Data = MirrorData ? new byte[(long)c*VertStride] : null; }
     public void SetVertexBufferData<T>(Unity.Collections.NativeArray<T> d,int s,int o,int c,int stream=0,Rendering.MeshUpdateFlags f=Rendering.MeshUpdateFlags.Default) where T:struct {
       if (VBCap>=0 && o+c > VBCap) throw new InvalidOperationException("ЗАЛИВКА ЗА ЁМКОСТЬ ВЕРШИННОГО БУФЕРА: dst="+o+" cnt="+c+" cap="+VBCap);
       if (s+c > d.Length) throw new InvalidOperationException("ЧТЕНИЕ ЗА ГРАНИЦУ ИСТОЧНИКА: src="+s+" cnt="+c+" len="+d.Length);
       if (System.Runtime.CompilerServices.Unsafe.SizeOf<T>() != VertStride) throw new InvalidOperationException("РАЗМЕР ВЕРШИНЫ НЕ СОВПАЛ С РАЗМЕТКОЙ: struct="+System.Runtime.CompilerServices.Unsafe.SizeOf<T>()+" layout="+VertStride);
       UpCalls++; UpVerts+=c; UpBytes+=(long)c*VertStride;
+      if (Data != null) unsafe { new ReadOnlySpan<byte>((byte*)d._p + (long)s*VertStride, c*VertStride).CopyTo(new Span<byte>(Data, o*VertStride, c*VertStride)); }
       Writes.Add((o,c)); }
     public void SetIndexBufferParams(int c, Rendering.IndexFormat f){ IBCap=c; IBFilled=0; }
     public void SetIndexBufferData<T>(Unity.Collections.NativeArray<T> d,int s,int o,int c,Rendering.MeshUpdateFlags f=Rendering.MeshUpdateFlags.Default) where T:struct {
@@ -229,7 +237,13 @@ namespace UnityEngine {
     public void SetSubMesh(int i, Rendering.SubMeshDescriptor d, Rendering.MeshUpdateFlags f=Rendering.MeshUpdateFlags.Default){
       if (d.indexStart+d.indexCount > IBFilled) throw new InvalidOperationException("SUBMESH ССЫЛАЕТСЯ НА НЕЗАЛИТЫЕ ИНДЕКСЫ: нужно "+(d.indexStart+d.indexCount)+", залито "+IBFilled);
       if (d.firstVertex+d.vertexCount > VBCap) throw new InvalidOperationException("SUBMESH ССЫЛАЕТСЯ ЗА ЁМКОСТЬ ВЕРШИН");
-      Covered=0; foreach(var w in Writes) Covered+=w.cnt; Writes.Clear();
+      // Покрытие копится с последнего SetVertexBufferParams, а не с прошлого SetSubMesh:
+      // при частичной заливке retained-префикс лежит в буфере с прошлых кадров и тоже
+      // считается записанным. Список сжимается до непрерывного префикса, иначе рос бы вечно.
+      int end=0; bool grew=true;
+      while (grew) { grew=false; foreach(var w in Writes) if (w.dst<=end && w.dst+w.cnt>end) { end=w.dst+w.cnt; grew=true; } }
+      Writes.Clear(); if (end>0) Writes.Add((0,end));
+      Covered=Math.Min(end, d.vertexCount);
       Sub=d; SubSet=true; }
     public void SetVertices(List<Vector3> v){} public void GetVertices(List<Vector3> v){} public void GetNormals(List<Vector3> v){}
     public int[] GetTriangles(int s, bool applyBase=true)=>null; public void GetTriangles(List<int> t,int s,bool applyBase=true){} public Rendering.IndexFormat indexFormat;

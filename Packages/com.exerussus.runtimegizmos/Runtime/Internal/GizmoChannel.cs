@@ -69,6 +69,21 @@ namespace RuntimeGizmos.Internal
         bool _retainedTouched;
         float _minExpiry = float.MaxValue;
 
+        // Версия содержимого retained и версия, лежащая в каждом меше кольца.
+        //
+        // Retained и кадровая геометрия живут в одном меше: retained префиксом, кадровая
+        // за ним. Раньше любой обмен Front/Back взводил _dirty, и Upload перезаливал весь
+        // префикс заново — то есть статика «ничего не стоила» только в канале, где больше
+        // никто ничего не рисовал. Одна DrawLine в кадре рядом с каркасом уровня стоила
+        // мегабайты трафика. Теперь префикс заливается, только если версия в меше отстала:
+        // после правки retained — по одному разу в каждый меш кольца.
+        //
+        // Версия растёт везде, где меняются байты retained: запись (Target), выбывание
+        // со сдвигом (CompactRetained) и Clear. 0 у меша — «содержимого нет»: новый меш
+        // или SetVertexBufferParams, который буфер пересоздаёт.
+        int _retainedVersion = 1;
+        readonly int[] _meshRetainedVersion = new int[2];
+
         public GizmoChannel(string name, VertexAttributeDescriptor[] layout, MeshTopology topology,
             int primVerts, int initialCapacity, float boundsPadding = 0f)
         {
@@ -115,6 +130,7 @@ namespace RuntimeGizmos.Internal
             if (!retained) return _back;
             _retainedTouched = true;
             _dirty = true;
+            _retainedVersion++;
             return _retained;
         }
 
@@ -199,7 +215,11 @@ namespace RuntimeGizmos.Internal
             _retained.SetCount(w);
             _retainedExpiry.SetCount(w);
 
-            if (w != n) _dirty = true;      // что-то выбыло — меш пора перезалить
+            if (w != n)                     // что-то выбыло — меш пора перезалить
+            {
+                _dirty = true;
+                _retainedVersion++;
+            }
             _minExpiry = minExpiry;
             _retainedTouched = false;
         }
@@ -277,6 +297,7 @@ namespace RuntimeGizmos.Internal
                 _meshVertCap[_cursor] = cap;
                 _meshIdxCap[_cursor] = 0; // принудительно перезалить индексы
                 _shrinkVotes[_cursor] = 0;
+                _meshRetainedVersion[_cursor] = 0;  // буфер пересоздан — префикса в нём больше нет
             }
 
             if (_meshIdxCap[_cursor] < cap)
@@ -287,8 +308,10 @@ namespace RuntimeGizmos.Internal
                 _meshIdxCap[_cursor] = cap;
             }
 
-            if (_retained.Count > 0)
+            if (_retained.Count > 0 && _meshRetainedVersion[_cursor] != _retainedVersion)
                 m.SetVertexBufferData(_retained.Array, 0, 0, _retained.Count, 0, GizmoMeshFlags.Silent);
+            _meshRetainedVersion[_cursor] = _retainedVersion;
+
             if (_front.Count > 0)
                 m.SetVertexBufferData(_front.Array, 0, _retained.Count, _front.Count, 0, GizmoMeshFlags.Silent);
 
@@ -336,6 +359,7 @@ namespace RuntimeGizmos.Internal
             _dirty = true;
             _retainedTouched = false;
             _minExpiry = float.MaxValue;
+            _retainedVersion++;
         }
 
         public void Dispose()
@@ -350,6 +374,9 @@ namespace RuntimeGizmos.Internal
                 if (Application.isPlaying) UnityEngine.Object.Destroy(_meshes[i]);
                 else UnityEngine.Object.DestroyImmediate(_meshes[i]);
                 _meshes[i] = null;
+                _meshVertCap[i] = 0;
+                _meshIdxCap[i] = 0;
+                _meshRetainedVersion[i] = 0;
             }
         }
     }
