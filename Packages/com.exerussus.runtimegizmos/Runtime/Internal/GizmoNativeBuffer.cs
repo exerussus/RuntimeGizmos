@@ -215,9 +215,33 @@ namespace RuntimeGizmos.Internal
             _indices = na;
         }
 
+        static NativeArray<ushort> _indices16;
+
+        /// <summary>
+        /// Тот же пул в 16 битах — для мешей до 65536 вершин, то есть почти для всех.
+        /// Индексы у каналов тождественные, и 32 бита на каждый тратили вдвое больше
+        /// видеопамяти и выборки, чем нужно.
+        /// </summary>
+        public static NativeArray<ushort> Indices16 => _indices16;
+
+        public const int MaxIndex16 = 65536;
+
+        public static void Ensure16(int count)
+        {
+            if (_indices16.IsCreated && _indices16.Length >= count) return;
+
+            int cap = Mathf.Min(MaxIndex16, Mathf.Max(1024, Mathf.NextPowerOfTwo(count)));
+            var na = new NativeArray<ushort>(cap, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            ushort* p = (ushort*)NativeArrayUnsafeUtility.GetUnsafePtr(na);
+            for (int i = 0; i < cap; i++) p[i] = (ushort)i;
+            if (_indices16.IsCreated) _indices16.Dispose();
+            _indices16 = na;
+        }
+
         public static void Dispose()
         {
             if (_indices.IsCreated) _indices.Dispose();
+            if (_indices16.IsCreated) _indices16.Dispose();
         }
     }
 

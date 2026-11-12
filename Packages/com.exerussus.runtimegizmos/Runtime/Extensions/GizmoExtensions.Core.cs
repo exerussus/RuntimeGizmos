@@ -90,7 +90,9 @@ namespace RuntimeGizmos.Extensions
 
         static void Hierarchy(Transform t, int depth, float nodeSize)
         {
-            if (nodeSize > 0f) Gizmo.DrawPoint(t.position, nodeSize);
+            // Позиция родителя читается один раз, а не на каждого ребёнка.
+            var pos = t.position;
+            if (nodeSize > 0f) Gizmo.DrawPoint(pos, nodeSize);
             if (depth < 0) return;
 
             int n = t.childCount;
@@ -98,7 +100,7 @@ namespace RuntimeGizmos.Extensions
             {
                 var ch = t.GetChild(i);
                 if (ch == null) continue;
-                Gizmo.DrawLine(t.position, ch.position);
+                Gizmo.DrawLine(pos, ch.position);
                 Hierarchy(ch, depth - 1, nodeSize);
             }
         }
@@ -182,10 +184,14 @@ namespace RuntimeGizmos.Extensions
             // — чтение её столбцов как строк.
             var inv = t.worldToLocalMatrix;
 
+            // Матрица один раз, а не t.TransformPoint на вершину: это нативный вызов, и на
+            // меше в десятки тысяч вершин он стоил больше, чем всё остальное вместе.
+            var l2w = t.localToWorldMatrix;
+
             using (Gizmo.Scope(c))
                 for (int i = 0; i < n; i += step)
                 {
-                    var p = t.TransformPoint(_verts[i]);
+                    var p = l2w.MultiplyPoint3x4(_verts[i]);
                     var ln = _norms[i];
                     var wn = new Vector3(
                         inv.m00 * ln.x + inv.m10 * ln.y + inv.m20 * ln.z,

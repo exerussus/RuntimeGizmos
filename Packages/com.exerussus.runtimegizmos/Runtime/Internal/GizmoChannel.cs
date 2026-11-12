@@ -32,6 +32,7 @@ namespace RuntimeGizmos.Internal
         readonly Mesh[] _meshes = new Mesh[2];
         readonly int[] _meshVertCap = new int[2];
         readonly int[] _meshIdxCap = new int[2];
+        readonly IndexFormat[] _meshIdxFormat = new IndexFormat[2];
 
         // Сжатие GPU-буферов после пика.
         //
@@ -312,12 +313,22 @@ namespace RuntimeGizmos.Internal
                 _meshRetainedVersion[_cursor] = 0;  // буфер пересоздан — префикса в нём больше нет
             }
 
-            if (_meshIdxCap[_cursor] < cap)
+            var format = cap <= GizmoIndexPool.MaxIndex16 ? IndexFormat.UInt16 : IndexFormat.UInt32;
+            if (_meshIdxCap[_cursor] < cap || _meshIdxFormat[_cursor] != format)
             {
-                GizmoIndexPool.Ensure(cap);
-                m.SetIndexBufferParams(cap, IndexFormat.UInt32);
-                m.SetIndexBufferData(GizmoIndexPool.Indices, 0, 0, cap, GizmoMeshFlags.Silent);
+                m.SetIndexBufferParams(cap, format);
+                if (format == IndexFormat.UInt16)
+                {
+                    GizmoIndexPool.Ensure16(cap);
+                    m.SetIndexBufferData(GizmoIndexPool.Indices16, 0, 0, cap, GizmoMeshFlags.Silent);
+                }
+                else
+                {
+                    GizmoIndexPool.Ensure(cap);
+                    m.SetIndexBufferData(GizmoIndexPool.Indices, 0, 0, cap, GizmoMeshFlags.Silent);
+                }
                 _meshIdxCap[_cursor] = cap;
+                _meshIdxFormat[_cursor] = format;
             }
 
             if (_retained.Count > 0 && _meshRetainedVersion[_cursor] != _retainedVersion)

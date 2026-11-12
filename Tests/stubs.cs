@@ -228,11 +228,15 @@ namespace UnityEngine {
       UpCalls++; UpVerts+=c; UpBytes+=(long)c*VertStride;
       if (Data != null) unsafe { new ReadOnlySpan<byte>((byte*)d._p + (long)s*VertStride, c*VertStride).CopyTo(new Span<byte>(Data, o*VertStride, c*VertStride)); }
       Writes.Add((o,c)); }
-    public void SetIndexBufferParams(int c, Rendering.IndexFormat f){ IBCap=c; IBFilled=0; }
+    public Rendering.IndexFormat IBFormat;
+    public void SetIndexBufferParams(int c, Rendering.IndexFormat f){ IBCap=c; IBFilled=0; IBFormat=f; }
     public void SetIndexBufferData<T>(Unity.Collections.NativeArray<T> d,int s,int o,int c,Rendering.MeshUpdateFlags f=Rendering.MeshUpdateFlags.Default) where T:struct {
       if (s+c > d.Length) throw new InvalidOperationException("ИНДЕКСОВ В ПУЛЕ МЕНЬШЕ, ЧЕМ ЗАЛИВАЕТСЯ: cnt="+c+" пул="+d.Length);
       if (o+c > IBCap) throw new InvalidOperationException("ЗАЛИВКА ЗА ЁМКОСТЬ ИНДЕКСНОГО БУФЕРА");
-      IdxCalls++; IdxBytes+=(long)c*4;
+      int isz=System.Runtime.CompilerServices.Unsafe.SizeOf<T>();
+      if (isz != (IBFormat==Rendering.IndexFormat.UInt16 ? 2 : 4)) throw new InvalidOperationException("ТИП ИНДЕКСОВ НЕ СОВПАЛ С ФОРМАТОМ БУФЕРА: "+typeof(T).Name+" в "+IBFormat);
+      if (IBFormat==Rendering.IndexFormat.UInt16 && o+c > 65536) throw new InvalidOperationException("16-БИТНЫЙ БУФЕР БОЛЬШЕ 65536 ИНДЕКСОВ");
+      IdxCalls++; IdxBytes+=(long)c*isz;
       IBFilled=o+c; }
     public void SetSubMesh(int i, Rendering.SubMeshDescriptor d, Rendering.MeshUpdateFlags f=Rendering.MeshUpdateFlags.Default){
       if (d.indexStart+d.indexCount > IBFilled) throw new InvalidOperationException("SUBMESH ССЫЛАЕТСЯ НА НЕЗАЛИТЫЕ ИНДЕКСЫ: нужно "+(d.indexStart+d.indexCount)+", залито "+IBFilled);

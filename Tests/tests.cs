@@ -3097,6 +3097,34 @@ public static class Tests
                   b.extents.x > 100f && (b.center - cam.transform.position).magnitude < 1e-4f,
                   "center " + b.center + " extents " + b.extents);
         }
+
+        Group("AF. Ревью 12.11: 16-битные индексы");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            GizmoSettings.MaxVerticesPerChannel = 0;
+            Gizmo.lineWidth = 1f;
+            var cam = new Camera { cameraType = CameraType.Game }; cam.transform = new Transform();
+            var thin = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            float t = 40000f;
+            Mesh Frame(int lines)
+            {
+                for (int i = 0; i < lines; i++) Gizmo.DrawLine(Vector3.zero, Vector3.one);
+                t += 0.016f; Tick(t); GizmoRenderer.Submit(cam);
+                thin[0].Prepare(out var m, out _); return m;
+            }
+            var small = Frame(100);
+            Check("AF34 маленький меш — UInt16", small.IBFormat == IndexFormat.UInt16 && small.IBFilled >= small.Sub.vertexCount);
+            var big = Frame(40000);
+            Check("AF35 больше 65536 вершин — UInt32", big.IBFormat == IndexFormat.UInt32 && big.IBFilled >= big.Sub.vertexCount,
+                  big.IBFormat + " " + big.IBFilled + "/" + big.Sub.vertexCount);
+            Mesh last = null;
+            for (int f = 0; f < 600; f++) last = Frame(100);
+            Check("AF36 после сжатия обратно UInt16", last.IBFormat == IndexFormat.UInt16 && last.IBFilled >= last.Sub.vertexCount,
+                  last.IBFormat + " cap " + last.VBCap);
+            Check("AF37 ровно 65536 вершин помещаются в UInt16", Frame(32768).IBFormat == IndexFormat.UInt16);
+            GizmoSettings.Overrides.MaxVerticesPerChannel = null;
+            Gizmo.Reset();
+        }
     }
 
     // Обёртка держит одну и ту же строку вызова: ключ регистрации включает место вызова.
