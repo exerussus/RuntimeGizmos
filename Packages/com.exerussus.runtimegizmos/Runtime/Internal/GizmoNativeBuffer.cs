@@ -29,10 +29,46 @@ namespace RuntimeGizmos.Internal
         public Vector3 Min;
         public Vector3 Max;
 
+        // Стартовая ёмкость — ниже неё буфер не сжимается.
+        readonly int _minCapacity;
+
+        // Сколько границ кадра подряд буфер был вчетверо больше нужного.
+        int _shrinkVotes;
+
+        /// <summary>Сколько границ кадра подряд буфер должен простоять полупустым, чтобы сжаться.</summary>
+        internal const int ShrinkAfter = 240;
+
         public GizmoNativeBuffer(int capacity)
         {
-            Allocate(Mathf.Max(64, Mathf.NextPowerOfTwo(capacity)));
+            _minCapacity = Mathf.Max(64, Mathf.NextPowerOfTwo(capacity));
+            Allocate(_minCapacity);
             ResetBounds();
+        }
+
+        /// <summary>Текущая ёмкость в элементах.</summary>
+        public int Capacity => _capacity;
+
+        /// <summary>
+        /// Раз в кадр, на границе: отдать память после разового пика.
+        ///
+        /// Буфер только рос, и один кадр с миллионом вершин держал десятки мегабайт
+        /// до конца сессии — а в эдит-моде сессия длится до перезагрузки домена. Сжатие
+        /// с гистерезисом, как у GPU-буферов канала: вчетверо больше нужного ShrinkAfter
+        /// границ подряд. Колебание вокруг степени двойки так ничего не пересоздаёт.
+        /// </summary>
+        public void TickShrink()
+        {
+            if (_capacity <= _minCapacity || (long)_count * 4 > _capacity)
+            {
+                _shrinkVotes = 0;
+                return;
+            }
+
+            if (++_shrinkVotes < ShrinkAfter) return;
+            _shrinkVotes = 0;
+
+            int cap = Mathf.Max(_minCapacity, Mathf.NextPowerOfTwo(Mathf.Max(_count, 1)) * 2);
+            if (cap < _capacity) Allocate(cap);
         }
 
         public int Count

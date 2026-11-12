@@ -3020,6 +3020,68 @@ public static class Tests
             GizmoSettings.SetCategory(Off, true);
             Gizmo.Reset();
         }
+
+        Group("AF. Ревью 12.11: память после пика возвращается");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            Graphics.Record = false; Mesh.MirrorData = true;
+            GizmoSettings.MaxVerticesPerChannel = 0;
+            Gizmo.lineWidth = 1f;
+            var cam = new Camera { cameraType = CameraType.Game }; cam.transform = new Transform();
+            var thin = Priv<GizmoChannel<GizmoVertex>[]>(typeof(GizmoRenderer), "_thin");
+            var ch = thin[0];
+            var chT = ch.GetType();
+            int Cap(string field) => ((GizmoNativeBuffer<GizmoVertex>)chT.GetField(field, BindingFlags.NonPublic | BindingFlags.Instance).GetValue(ch)).Capacity;
+            int[] MeshCaps() => (int[])chT.GetField("_meshVertCap", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(ch);
+            var meshes = (Mesh[])chT.GetField("_meshes", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(ch);
+            float t = 20000f;
+            void Frame(int lines) { for (int i = 0; i < lines; i++) Gizmo.DrawLine(Vector3.zero, Vector3.one); t += 0.016f; Tick(t); GizmoRenderer.Submit(cam); }
+
+            // Пик в два кадра раздувает и Front, и Back.
+            Frame(300000); Frame(300000);
+            int peakF = Cap("_front"), peakB = Cap("_back");
+            for (int f = 0; f < 300; f++) Frame(10);
+            Check("AF25 Front и Back отдают память после пика", Cap("_front") <= 2048 && Cap("_back") <= 2048,
+                  $"{peakF}/{peakB} → {Cap("_front")}/{Cap("_back")}");
+            Check("AF26 и GPU-буферы живого канала тоже", MeshCaps()[0] <= 4096 && MeshCaps()[1] <= 4096,
+                  MeshCaps()[0] + "/" + MeshCaps()[1]);
+
+            // Опустевший канал: Upload не зовётся вовсе, меши раньше висели вечно.
+            Frame(300000); Frame(300000);
+            for (int f = 0; f < 300; f++) Frame(0);
+            Check("AF27 опустевший канал отдаёт меши", meshes[0] == null && meshes[1] == null && MeshCaps()[0] == 0);
+            Frame(5);
+            Check("AF28 и поднимает их снова по первой геометрии", ch.Prepare(out var again, out _) && again.Sub.vertexCount == 10);
+
+            // Канал со статикой после пика: заливок нет, сжатие назначается принудительно.
+            Frame(300000);
+            Gizmo.duration = 1e6f; Gizmo.DrawLine(Vector3.zero, Vector3.up); Gizmo.DrawLine(Vector3.zero, Vector3.right); Gizmo.duration = 0f;
+            Frame(300000);
+            bool same = true; string why = "";
+            for (int f = 0; f < 300; f++) { Frame(0); if (same) same = MeshMatches(ch, out why); }
+            Check("AF29 статичный канал после пика сжимает оба меша", MeshCaps()[0] <= 4096 && MeshCaps()[1] <= 4096,
+                  MeshCaps()[0] + "/" + MeshCaps()[1]);
+            Check("AF30 и retained после пересоздания на месте", same, why);
+
+            // Retained после массового истечения.
+            Gizmo.duration = 0.5f;
+            for (int i = 0; i < 200000; i++) Gizmo.DrawLine(Vector3.zero, Vector3.one);
+            Gizmo.duration = 0f;
+            int peakR = ch.Retained.Capacity;
+            for (int f = 0; f < 300; f++) Frame(0);
+            Check("AF31 retained отдаёт память после истечения", ch.Retained.Capacity <= 1024 && ch.RetainedExpiry.Capacity <= 1024,
+                  peakR + " → " + ch.Retained.Capacity + "/" + ch.RetainedExpiry.Capacity);
+
+            // Колебание вокруг степени двойки по-прежнему ничего не пересоздаёт.
+            Frame(510); Frame(515); Frame(510);
+            int a0 = Cap("_front"), b0 = Cap("_back");
+            for (int f = 0; f < 600; f++) Frame(f % 3 == 0 ? 515 : 510);
+            Check("AF32 колебание вокруг границы не сжимает буферы", Cap("_front") == a0 && Cap("_back") == b0);
+
+            GizmoSettings.Overrides.MaxVerticesPerChannel = null;
+            Mesh.MirrorData = false; Graphics.Record = true;
+            Gizmo.Reset();
+        }
     }
 
     // Обёртка держит одну и ту же строку вызова: ключ регистрации включает место вызова.

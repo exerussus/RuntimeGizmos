@@ -33,9 +33,21 @@ namespace RuntimeGizmos.Internal
         readonly int[] _meshVertCap = new int[2];
         readonly int[] _meshIdxCap = new int[2];
 
-        // Сколько заливок подряд буфер был вчетверо больше нужного. См. Upload.
-        readonly int[] _shrinkVotes = new int[2];
-        const int ShrinkAfter = 240;
+        // Сжатие GPU-буферов после пика.
+        //
+        // Раньше голоса за сжатие копились только внутри Upload, а Upload не зовётся ни
+        // у опустевшего канала, ни у статичного: после пика в миллион вершин такие каналы
+        // держали оба меша кольца раздутыми до конца сессии. Теперь голосует Prepare,
+        // раз в кадр: опустевший канал отдаёт меши целиком, а у живого меш, отставший
+        // по размеру, пересоздаётся на ближайшей заливке (_reshape), — для статики эта
+        // заливка назначается принудительно.
+        int _shrinkVotes;
+        readonly bool[] _reshape = new bool[2];
+        const int ShrinkAfter = GizmoNativeBuffer<float>.ShrinkAfter;
+
+        // Ниже этой ёмкости меш не сжимается и не отдаётся: пересоздавать мелочь дороже,
+        // чем держать.
+        const int KeepVerts = 4096;
 
         const float BoundsLimit = 1e9f;
         int _cursor;
@@ -138,6 +150,12 @@ namespace RuntimeGizmos.Internal
         {
             CompactRetained(now);
 
+            // До обмена: в Back лежит этот кадр, во Front — прошлый, в retained — живое.
+            _front.TickShrink();
+            _back.TickShrink();
+            _retained.TickShrink();
+            _retainedExpiry.TickShrink();
+
             if (_back.Count > 0)
             {
                 var tmp = _front;
@@ -232,6 +250,8 @@ namespace RuntimeGizmos.Internal
                 _prepared = true;
 
                 int total = _retained.Count + _front.Count;
+                VoteShrink(total);
+
                 if (total == 0)
                 {
                     _readyMesh = null;
@@ -239,7 +259,9 @@ namespace RuntimeGizmos.Internal
                 else if (_dirty || _readyMesh == null)
                 {
                     Upload(total);
-                    _dirty = false;
+
+                    // Второй меш кольца тоже ждёт пересоздания — заливка нужна и на следующем кадре.
+                    _dirty = _reshape[0] || _reshape[1];
                 }
                 // иначе в меше с прошлого кадра лежат ровно эти данные: и вершины,
                 // и bounds, и SubMeshDescriptor. Перезаливать нечего, курсор кольца
@@ -278,25 +300,15 @@ namespace RuntimeGizmos.Internal
             int have = _meshVertCap[_cursor];
             int cap = have;
 
-            if (want > have)
-            {
-                cap = want;
-            }
-            else if ((long)want * 4 <= have)
-            {
-                if (++_shrinkVotes[_cursor] >= ShrinkAfter) cap = want * 2;   // с запасом на рост
-            }
-            else
-            {
-                _shrinkVotes[_cursor] = 0;
-            }
+            if (want > have) cap = want;
+            else if (_reshape[_cursor]) cap = Mathf.Min(have, want * 2);   // с запасом на рост
+            _reshape[_cursor] = false;
 
             if (cap != have)
             {
                 m.SetVertexBufferParams(cap, _layout);
                 _meshVertCap[_cursor] = cap;
                 _meshIdxCap[_cursor] = 0; // принудительно перезалить индексы
-                _shrinkVotes[_cursor] = 0;
                 _meshRetainedVersion[_cursor] = 0;  // буфер пересоздан — префикса в нём больше нет
             }
 
@@ -347,6 +359,49 @@ namespace RuntimeGizmos.Internal
             _readyBounds = b;
         }
 
+        void VoteShrink(int total)
+        {
+            int want = total == 0 ? 0 : Mathf.Max(_primVerts, Mathf.NextPowerOfTwo(total));
+            int have = Mathf.Max(_meshVertCap[0], _meshVertCap[1]);
+
+            if (have <= KeepVerts || (long)want * 4 > have)
+            {
+                _shrinkVotes = 0;
+                return;
+            }
+
+            if (++_shrinkVotes < ShrinkAfter) return;
+            _shrinkVotes = 0;
+
+            if (total == 0)
+            {
+                ReleaseMeshes();
+                return;
+            }
+
+            for (int i = 0; i < 2; i++)
+                if ((long)want * 4 <= _meshVertCap[i]) _reshape[i] = true;
+            _dirty = true;
+        }
+
+        void ReleaseMeshes()
+        {
+            for (int i = 0; i < _meshes.Length; i++)
+            {
+                if (_meshes[i] != null)
+                {
+                    if (Application.isPlaying) UnityEngine.Object.Destroy(_meshes[i]);
+                    else UnityEngine.Object.DestroyImmediate(_meshes[i]);
+                    _meshes[i] = null;
+                }
+                _meshVertCap[i] = 0;
+                _meshIdxCap[i] = 0;
+                _meshRetainedVersion[i] = 0;
+                _reshape[i] = false;
+            }
+            _readyMesh = null;
+        }
+
         public void Clear()
         {
             _front.Clear();
@@ -368,16 +423,7 @@ namespace RuntimeGizmos.Internal
             _back.Dispose();
             _retained.Dispose();
             _retainedExpiry.Dispose();
-            for (int i = 0; i < _meshes.Length; i++)
-            {
-                if (_meshes[i] == null) continue;
-                if (Application.isPlaying) UnityEngine.Object.Destroy(_meshes[i]);
-                else UnityEngine.Object.DestroyImmediate(_meshes[i]);
-                _meshes[i] = null;
-                _meshVertCap[i] = 0;
-                _meshIdxCap[i] = 0;
-                _meshRetainedVersion[i] = 0;
-            }
+            ReleaseMeshes();
         }
     }
 }
