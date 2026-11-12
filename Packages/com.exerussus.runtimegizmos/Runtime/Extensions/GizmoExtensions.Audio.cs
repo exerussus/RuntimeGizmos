@@ -19,6 +19,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawDistances(this AudioSource src, Color c)
         {
+            if (!Gizmo.active) return;
             if (src == null) return;
             var p = src.transform.position;
 

@@ -21,6 +21,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(this Transform t, Color c)
         {
+            if (!Gizmo.active) return;
             if (t == null) return;
             using (Gizmo.Scope(c)) Gizmo.DrawVolume(t);
         }
@@ -29,6 +30,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(this Transform t)
         {
+            if (!Gizmo.active) return;
             if (t != null) Gizmo.DrawVolume(t);
         }
 
@@ -37,6 +39,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawLabel(this Transform t, string text, float worldHeight = 0f)
         {
+            if (!Gizmo.active) return;
             if (t != null) Gizmo.DrawLabel(t, text, worldHeight);
         }
 
@@ -45,6 +48,7 @@ namespace RuntimeGizmos.Extensions
         public static void DrawLinkTo(this Transform t, Transform other, Color c,
                                       float width = 2f, string label = null)
         {
+            if (!Gizmo.active) return;
             if (t != null && other != null) Gizmo.DrawLink(t, other, c, width, label);
         }
 
@@ -52,6 +56,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawAxes(this Transform t, float size = 1f)
         {
+            if (!Gizmo.active) return;
             if (t != null) Gizmo.DrawAxes(t.position, t.rotation, size);
         }
 
@@ -59,6 +64,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawForward(this Transform t, float length = 1f)
         {
+            if (!Gizmo.active) return;
             if (t != null) Gizmo.DrawArrow(t.position, t.position + t.forward * length);
         }
 
@@ -66,6 +72,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawBounds(this Transform t, Color c)
         {
+            if (!Gizmo.active) return;
             if (t == null) return;
             using (Gizmo.Scope(c)) Gizmo.DrawBounds(Gizmo.WorldBounds(t));
         }
@@ -76,6 +83,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawHierarchy(this Transform t, Color c, int maxDepth = 8, float nodeSize = 0.03f)
         {
+            if (!Gizmo.active) return;
             if (t == null) return;
             using (Gizmo.Scope(c)) Hierarchy(t, maxDepth, nodeSize);
         }
@@ -101,6 +109,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void Draw(this Bounds b, Color c)
         {
+            if (!Gizmo.active) return;
             using (Gizmo.Scope(c)) Gizmo.DrawBounds(b);
         }
 
@@ -108,6 +117,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(this Bounds b, Color c)
         {
+            if (!Gizmo.active) return;
             using (Gizmo.Scope(c)) Gizmo.DrawVolume(b);
         }
 
@@ -120,6 +130,7 @@ namespace RuntimeGizmos.Extensions
         public static void DrawPath(this IReadOnlyList<Vector3> points, Color c,
                                     float nodeSize = 0.08f, int arrowEvery = 1, bool looped = false)
         {
+            if (!Gizmo.active) return;
             using (Gizmo.Scope(c)) Gizmo.DrawPath(points, nodeSize, arrowEvery, looped);
         }
 
@@ -127,6 +138,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolumes(this IReadOnlyList<Transform> items, Color c)
         {
+            if (!Gizmo.active) return;
             if (items == null) return;
 
             using (Gizmo.Scope(c))
@@ -143,6 +155,7 @@ namespace RuntimeGizmos.Extensions
         public static void DrawNormals(this Mesh mesh, Transform t, Color c,
                                        float length = 0.1f, int step = 1)
         {
+            if (!Gizmo.active) return;
             if (mesh == null || t == null) return;
             if (!mesh.isReadable)
             {
@@ -195,6 +208,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWire(this Mesh mesh, Transform t, Color c)
         {
+            if (!Gizmo.active) return;
             if (mesh == null || t == null) return;
             using (Gizmo.Scope(c)) Gizmo.DrawWireMesh(mesh, t.position, t.rotation, t.lossyScale);
         }
@@ -203,6 +217,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawBounds(this Renderer r, Color c)
         {
+            if (!Gizmo.active) return;
             if (r == null) return;
             using (Gizmo.Scope(c)) Gizmo.DrawBounds(r.bounds);
         }
@@ -213,6 +228,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawFrustum(this Camera cam, Color c)
         {
+            if (!Gizmo.active) return;
             if (cam == null) return;
             using (Gizmo.Scope(c)) Gizmo.DrawFrustum(cam);
         }
@@ -221,6 +237,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawRange(this Light light, Color c)
         {
+            if (!Gizmo.active) return;
             if (light == null) return;
             var t = light.transform;
 
@@ -247,6 +264,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWorldCorners(this RectTransform rt, Color c)
         {
+            if (!Gizmo.active) return;
             if (rt == null) return;
 
             rt.GetWorldCorners(_corners);

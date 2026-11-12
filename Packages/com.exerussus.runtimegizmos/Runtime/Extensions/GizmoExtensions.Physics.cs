@@ -28,6 +28,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawShape(this Collider col, Color c)
         {
+            if (!Gizmo.active) return;
             if (col == null) return;
             var t = col.transform;
 
@@ -70,6 +71,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawBounds(this Collider col, Color c)
         {
+            if (!Gizmo.active) return;
             if (col == null) return;
             using (Gizmo.Scope(c)) Gizmo.DrawBounds(col.bounds);
         }
@@ -113,6 +115,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVelocity(this Rigidbody rb, Color c, float scale = 0.2f)
         {
+            if (!Gizmo.active) return;
             if (rb == null) return;
             using (Gizmo.Scope(c))
                 Gizmo.DrawVector(rb.worldCenterOfMass, rb.linearVelocity, scale, "");
@@ -122,6 +125,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawAngularVelocity(this Rigidbody rb, Color c, float scale = 0.2f)
         {
+            if (!Gizmo.active) return;
             if (rb == null) return;
 
             var w = rb.angularVelocity;
@@ -144,6 +148,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawCenterOfMass(this Rigidbody rb, Color c, float size = 0.12f)
         {
+            if (!Gizmo.active) return;
             if (rb == null) return;
 
             using (Gizmo.Scope(c))
@@ -159,6 +164,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void Draw(this Ray ray, Color c, float distance = 100f)
         {
+            if (!Gizmo.active) return;
             using (Gizmo.Scope(c))
                 Gizmo.DrawArrow(ray.origin, ray.origin + ray.direction * distance);
         }
@@ -167,6 +173,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void Draw(this RaycastHit hit, Color c, float size = 0.15f)
         {
+            if (!Gizmo.active) return;
             // Промах: структура пустая, point = (0,0,0). Рисовать маркер в начале координат незачем.
             if (IsMiss(in hit)) return;
 
@@ -179,6 +186,7 @@ namespace RuntimeGizmos.Extensions
         public static void DrawTo(this Ray ray, RaycastHit hit, float maxDistance,
                                   Color hitColor, float restAlpha = 0.25f)
         {
+            if (!Gizmo.active) return;
             var end = ray.origin + ray.direction * maxDistance;
             var rest = new Color(hitColor.r, hitColor.g, hitColor.b,
                                  hitColor.a * Mathf.Clamp01(restAlpha));
@@ -217,6 +225,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawAnchors(this Joint joint, Color c, float size = 0.08f)
         {
+            if (!Gizmo.active) return;
             if (joint == null) return;
             var t = joint.transform;
 

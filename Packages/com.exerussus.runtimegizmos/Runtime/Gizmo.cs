@@ -63,6 +63,28 @@ namespace RuntimeGizmos
             set => GizmoRenderer.SetEnabledByUser(value);
         }
 
+        /// <summary>
+        /// Нарисуется ли сейчас хоть что-нибудь: пакет включён и текущая <see cref="category"/>
+        /// не выключена. Встроенные составные вызовы и расширения проверяют это сами;
+        /// своё дорогое вычисление перед рисованием (обход сцены, сборку пути) стоит
+        /// закрыть той же проверкой:
+        /// <code>
+        /// using (Gizmo.Category(CatAI))
+        ///     if (Gizmo.active) DrawPathOf(agent.CalculateCorners());
+        /// </code>
+        ///
+        /// В релизе без RUNTIME_GIZMOS_ALWAYS всегда false: Draw* там вырезаны компилятором,
+        /// и дорогая подготовка под проверкой исчезает из работы вместе с ними.
+        /// </summary>
+        public static bool active
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD || RUNTIME_GIZMOS_ALWAYS
+            get => GizmoRenderer.Active;
+#else
+            get => false;
+#endif
+        }
+
         public static Color color
         {
             get => s_Color;
@@ -390,6 +412,7 @@ namespace RuntimeGizmos
                                         ReadOnlySpan<char> suffix, Vector3 position, float sizePixels,
                                         Vector2 pixelOffset)
         {
+            if (!GizmoRenderer.Active) return;
             Span<char> buf = stackalloc char[64];
             if (prefix.Length > 16 || suffix.Length > 16) return;
 
@@ -424,6 +447,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawLineList(ReadOnlySpan<Vector3> points)
         {
+            if (!GizmoRenderer.Active) return;
             int n = points.Length & ~1;
             for (int i = 0; i < n; i += 2) GizmoRenderer.Line(Xf(points[i]), Xf(points[i + 1]));
         }
@@ -431,6 +455,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawLineStrip(ReadOnlySpan<Vector3> points, bool looped = false)
         {
+            if (!GizmoRenderer.Active) return;
             int n = points.Length;
             if (n < 2) return;
             var prev = Xf(points[0]);
@@ -447,6 +472,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawPolyLine(IReadOnlyList<Vector3> points, bool looped = false)
         {
+            if (!GizmoRenderer.Active) return;
             int n = points.Count;
             if (n < 2) return;
             var prev = Xf(points[0]);
@@ -529,6 +555,7 @@ namespace RuntimeGizmos
         public static void DrawMesh(Mesh mesh, int submeshIndex, Vector3 position = default,
             Quaternion rotation = default, Vector3 scale = default)
         {
+            if (!GizmoRenderer.Active) return;
             if (mesh == null) return;
             if (rotation.x == 0 && rotation.y == 0 && rotation.z == 0 && rotation.w == 0) rotation = Quaternion.identity;
             if (scale == Vector3.zero) scale = Vector3.one;
@@ -560,6 +587,7 @@ namespace RuntimeGizmos
         public static void DrawWireMesh(Mesh mesh, int submeshIndex, Vector3 position = default,
             Quaternion rotation = default, Vector3 scale = default)
         {
+            if (!GizmoRenderer.Active) return;
             if (mesh == null) return;
             if (rotation.x == 0 && rotation.y == 0 && rotation.z == 0 && rotation.w == 0) rotation = Quaternion.identity;
             if (scale == Vector3.zero) scale = Vector3.one;
@@ -581,6 +609,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawFrustum(Vector3 center, float fov, float maxRange, float minRange, float aspect)
         {
+            if (!GizmoRenderer.Active) return;
             float tan = Mathf.Tan(fov * 0.5f * Mathf.Deg2Rad);
             float nh = tan * minRange, nw = nh * aspect;
             float fh = tan * maxRange, fw = fh * aspect;
@@ -602,6 +631,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawFrustum(Camera cam)
         {
+            if (!GizmoRenderer.Active) return;
             if (cam == null) return;
             var prev = s_Matrix;
             matrix = prev * Matrix4x4.TRS(cam.transform.position, cam.transform.rotation, Vector3.one);
@@ -618,6 +648,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawIcon(Vector3 center, string name, bool allowScaling, Color tint)
         {
+            if (!GizmoRenderer.Active) return;
             var tex = GizmoIcons.Resolve(name);
             if (tex != null) DrawIcon(center, tex, allowScaling, tint);
         }
@@ -626,6 +657,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawIcon(Vector3 center, Texture texture, bool allowScaling = true, Color tint = default, float size = 32f)
         {
+            if (!GizmoRenderer.Active) return;
             if (texture == null) return;
             if (tint == default(Color)) tint = s_Color;
             GizmoRenderer.Quad(texture, Xf(center), new Vector2(size, size), !allowScaling, tint);
@@ -654,6 +686,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWireArc(Vector3 center, Vector3 normal, Vector3 from, float angleDeg, float radius)
         {
+            if (!GizmoRenderer.Active) return;
             GizmoPrimitives.Ensure();
             normal = normal.sqrMagnitude < 1e-8f ? Vector3.up : normal.normalized;
             from = from - Vector3.Dot(from, normal) * normal;
@@ -677,6 +710,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWireCapsule(Vector3 start, Vector3 end, float radius)
         {
+            if (!GizmoRenderer.Active) return;
             Vector3 axis = end - start;
             float len = axis.magnitude;
             Vector3 up = len < 1e-6f ? Vector3.up : axis / len;
@@ -700,6 +734,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWireCapsule(Vector3 center, Quaternion rotation, float height, float radius)
         {
+            if (!GizmoRenderer.Active) return;
             float half = Mathf.Max(0f, height * 0.5f - radius);
             Vector3 up = rotation * Vector3.up;
             DrawWireCapsule(center - up * half, center + up * half, radius);
@@ -708,6 +743,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWireCone(Vector3 apex, Vector3 direction, float angleDeg, float length)
         {
+            if (!GizmoRenderer.Active) return;
             Vector3 dir = direction.sqrMagnitude < 1e-8f ? Vector3.forward : direction.normalized;
             Vector3 baseC = apex + dir * length;
             float r = Mathf.Tan(angleDeg * Mathf.Deg2Rad) * length;
@@ -723,6 +759,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawArrow(Vector3 from, Vector3 to, float headSize = 0.25f, float headAngle = 22f)
         {
+            if (!GizmoRenderer.Active) return;
             DrawLine(from, to);
             Vector3 dir = to - from;
             float len = dir.magnitude;
@@ -743,6 +780,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawAxes(Vector3 position, Quaternion rotation, float size = 1f)
         {
+            if (!GizmoRenderer.Active) return;
             var prev = s_Color;
             color = Color.red; DrawLine(position, position + rotation * Vector3.right * size);
             color = Color.green; DrawLine(position, position + rotation * Vector3.up * size);
@@ -753,6 +791,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawPoint(Vector3 position, float size = 0.1f)
         {
+            if (!GizmoRenderer.Active) return;
             float h = size * 0.5f;
             DrawLine(position - Vector3.right * h, position + Vector3.right * h);
             DrawLine(position - Vector3.up * h, position + Vector3.up * h);
@@ -766,6 +805,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawQuad(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
         {
+            if (!GizmoRenderer.Active) return;
             Vector3 wa = Xf(a), wb = Xf(b), wc = Xf(c), wd = Xf(d);
             GizmoRenderer.Triangle(wa, wb, wc);
             GizmoRenderer.Triangle(wa, wc, wd);
@@ -774,6 +814,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawWireQuad(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
         {
+            if (!GizmoRenderer.Active) return;
             DrawLine(a, b); DrawLine(b, c); DrawLine(c, d); DrawLine(d, a);
         }
 

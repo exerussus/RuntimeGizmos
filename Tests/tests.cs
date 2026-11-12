@@ -2874,6 +2874,41 @@ public static class Tests
             Graphics.Record = true;
             Gizmo.Reset();
         }
+
+        Group("AF. Ревью 12.11: выключенное не делает работы");
+        {
+            Boot(); GizmoRenderer.Ensure();
+            const int Off = 1 << 7;
+            Check("AF8 по умолчанию Gizmo.active", Gizmo.active);
+            GizmoSettings.SetCategory(Off, false);
+            using (Gizmo.Category(Off)) Check("AF9 в выключенной категории active = false", !Gizmo.active);
+            Check("AF10 Scope вернул категорию — снова active", Gizmo.active);
+            Gizmo.enabled = false;
+            Check("AF11 Gizmo.enabled = false — active = false", !Gizmo.active);
+            Gizmo.enabled = true;
+
+            // Работа ДО первого Begin() видна по побочным эффектам: поиск иконки ходит в
+            // Resources, каркас меша строится и кладётся в кэш.
+            int loads = Resources.LoadCalls;
+            var wireCache = Priv<System.Collections.IDictionary>(typeof(GizmoWireMeshCache), "_cache");
+            int wires = wireCache.Count;
+            var meshOff = new Mesh { subMeshCount = 1 };
+            using (Gizmo.Category(Off))
+            {
+                Gizmo.DrawIcon(Vector3.zero, "нет_такой_иконки_af");
+                Gizmo.DrawWireMesh(meshOff);
+                Gizmo.DrawWireCapsule(Vector3.zero, Vector3.up, 0.5f);
+                Gizmo.DrawVolume(new GameObject().transform);
+                meshOff.DrawNormals(new Transform(), Color.red);
+            }
+            Check("AF12 иконка в выключенной категории не ищется", Resources.LoadCalls == loads,
+                  (Resources.LoadCalls - loads) + " загрузок");
+            Check("AF13 каркас в выключенной категории не строится", wireCache.Count == wires);
+            Gizmo.DrawWireMesh(meshOff);
+            Check("AF14 а во включённой строится", wireCache.Count == wires + 1);
+            GizmoSettings.SetCategory(Off, true);
+            Gizmo.Reset();
+        }
     }
 
     // Меш, который канал отдаёт в этом кадре, побайтно равен retained + кадровому снимку.

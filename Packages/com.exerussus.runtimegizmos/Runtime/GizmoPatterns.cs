@@ -20,6 +20,7 @@ namespace RuntimeGizmos
         public static void DrawVolume(Vector3 center, Quaternion rotation, Vector3 size,
                                       float cornerFraction = 0.22f, float faint = 0.28f)
         {
+            if (!GizmoRenderer.Active) return;
             var e = size * 0.5f;
             if (e.x <= 0f && e.y <= 0f && e.z <= 0f) return;
 
@@ -55,6 +56,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVolume(Transform t, float cornerFraction = 0.22f, float faint = 0.28f)
         {
+            if (!GizmoRenderer.Active) return;
             if (t == null) return;
 
             // WorldBounds уже мировые. Bounds-перегрузка пропустила бы их через Gizmo.matrix
@@ -117,6 +119,7 @@ namespace RuntimeGizmos
         public static void DrawLink(Transform from, Transform to, Color linkColor,
                                     float width = 2f, string label = null)
         {
+            if (!GizmoRenderer.Active) return;
             if (from == null || to == null) return;
 
             var prevMatrix = matrix;
@@ -129,6 +132,7 @@ namespace RuntimeGizmos
         public static void DrawLink(Bounds from, Bounds to, Color linkColor,
                                     float width = 2f, string label = null)
         {
+            if (!GizmoRenderer.Active) return;
             var prevColor = color;
             float prevWidth = lineWidth;
             bool prevWidthDefault = GizmoRenderer.WidthIsDefault;
@@ -203,6 +207,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawLabel(Transform t, string text, float worldHeight = 0f)
         {
+            if (!GizmoRenderer.Active) return;
             if (t == null || string.IsNullOrEmpty(text)) return;
 
             var b = WorldBounds(t);
@@ -227,6 +232,7 @@ namespace RuntimeGizmos
         public static void DrawPath(IReadOnlyList<Vector3> points, float nodeSize = 0.08f,
                                     int arrowEvery = 1, bool looped = false)
         {
+            if (!GizmoRenderer.Active) return;
             if (points == null || points.Count < 2) return;
 
             int last = looped ? points.Count : points.Count - 1;
@@ -255,6 +261,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVector(Vector3 origin, Vector3 vector, float scale = 1f, string label = null)
         {
+            if (!GizmoRenderer.Active) return;
             float len = vector.magnitude;
             if (len < 1e-5f)
             {
@@ -279,6 +286,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawRange(Vector3 center, float radius, float height = 0f)
         {
+            if (!GizmoRenderer.Active) return;
             if (radius <= 0f) return;
 
             DrawWireDisc(center, Vector3.up, radius);
@@ -301,6 +309,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawFieldOfView(Vector3 origin, Vector3 forward, float angleDeg, float distance)
         {
+            if (!GizmoRenderer.Active) return;
             if (distance <= 0f) return;
 
             var flat = new Vector3(forward.x, 0f, forward.z);
@@ -378,6 +387,7 @@ namespace RuntimeGizmos
         public static void DrawTrajectoryGravity(Vector3 origin, Vector3 velocity, Vector3 gravity,
                                                  float time = 3f, int steps = 24)
         {
+            if (!GizmoRenderer.Active) return;
             if (time <= 0f) return;
             if (steps < 2) steps = 2;
             var g = gravity;
@@ -396,6 +406,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawBezier(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int segments = 24)
         {
+            if (!GizmoRenderer.Active) return;
             if (segments < 1) segments = 1;
 
             var prev = a;
@@ -414,6 +425,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawGrid(Vector3 center, Quaternion rotation, Vector2 cell, Vector2Int count)
         {
+            if (!GizmoRenderer.Active) return;
             if (cell.x <= 0f || cell.y <= 0f || count.x < 1 || count.y < 1) return;
 
             float hx = cell.x * count.x * 0.5f;
@@ -441,6 +453,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawMeasure(Vector3 a, Vector3 b, string label = "", float arrowSize = 0f)
         {
+            if (!GizmoRenderer.Active) return;
             var d = b - a;
             float len = d.magnitude;
             if (len < 1e-5f) { DrawPoint(a, 0.05f); return; }
@@ -465,6 +478,7 @@ namespace RuntimeGizmos
                                          string label = "", float gap = 0f, float overshoot = -1f,
                                          float arrowSize = 0f)
         {
+            if (!GizmoRenderer.Active) return;
             var e = extensionDir;
             if (e.sqrMagnitude < 1e-8f) return;
             e = e.normalized;
@@ -496,6 +510,7 @@ namespace RuntimeGizmos
                                          Vector3 extensionDir, float extensionLength,
                                          string label = "", float gap = 0f, float overshoot = -1f)
         {
+            if (!GizmoRenderer.Active) return;
             if (axis.sqrMagnitude < 1e-8f) return;
             DrawDimension(from, from + axis.normalized * width, extensionDir, extensionLength,
                           label, gap, overshoot);
@@ -531,6 +546,7 @@ namespace RuntimeGizmos
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawHit(Vector3 point, Vector3 normal, float size = 0.15f)
         {
+            if (!GizmoRenderer.Active) return;
             var n = normal.sqrMagnitude > 1e-8f ? normal.normalized : Vector3.up;
 
             var up = Mathf.Abs(n.y) < 0.9f ? Vector3.up : Vector3.right;

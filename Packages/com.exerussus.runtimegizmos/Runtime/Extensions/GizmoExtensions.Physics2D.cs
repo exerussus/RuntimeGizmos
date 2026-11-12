@@ -37,6 +37,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawShape(this Collider2D col, Color c)
         {
+            if (!Gizmo.active) return;
             if (col == null) return;
             var t = col.transform;
 
@@ -81,6 +82,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawBounds(this Collider2D col, Color c)
         {
+            if (!Gizmo.active) return;
             if (col == null) return;
             using (Gizmo.Scope(c)) Gizmo.DrawBounds(col.bounds);
         }
@@ -155,6 +157,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawVelocity(this Rigidbody2D rb, Color c, float scale = 0.2f)
         {
+            if (!Gizmo.active) return;
             if (rb == null) return;
             using (Gizmo.Scope(c))
                 Gizmo.DrawVector(rb.worldCenterOfMass, rb.linearVelocity, scale, "");
@@ -164,6 +167,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawAngularVelocity(this Rigidbody2D rb, Color c, float scale = 0.005f)
         {
+            if (!Gizmo.active) return;
             if (rb == null) return;
 
             float w = rb.angularVelocity;
@@ -185,6 +189,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void DrawCenterOfMass(this Rigidbody2D rb, Color c, float size = 0.12f)
         {
+            if (!Gizmo.active) return;
             if (rb == null) return;
             var p = (Vector3)rb.worldCenterOfMass;
 
@@ -201,6 +206,7 @@ namespace RuntimeGizmos.Extensions
         [Cond(EDITOR), Cond(DEV), Cond(ALWAYS)]
         public static void Draw(this RaycastHit2D hit, Color c, float size = 0.15f)
         {
+            if (!Gizmo.active) return;
             if (hit.collider == null) return;
             using (Gizmo.Scope(c)) Gizmo.DrawHit(hit.point, hit.normal, size);
         }
